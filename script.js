@@ -16,7 +16,7 @@ client.on("connect", () => {
 
     client.subscribe("aquarium/status");
 });
-
+let scheduleLoaded = false;
 client.on("message", (topic, message) => {
 
     const data =
@@ -114,17 +114,22 @@ client.on("message", (topic, message) => {
     const slot2Parts =
         data.slot2.split("-");
 
-    document.getElementById("slot1On").value =
-        slot1Parts[0];
-
-    document.getElementById("slot1Off").value =
-        slot1Parts[1];
-
-    document.getElementById("slot2On").value =
-        slot2Parts[0];
-
-    document.getElementById("slot2Off").value =
-        slot2Parts[1];
+    if(!scheduleLoaded)
+    {
+        document.getElementById("slot1On").value =
+            slot1Parts[0].padStart(5, "0");
+    
+        document.getElementById("slot1Off").value =
+            slot1Parts[1].padStart(5, "0");
+    
+        document.getElementById("slot2On").value =
+            slot2Parts[0].padStart(5, "0");
+    
+        document.getElementById("slot2Off").value =
+            slot2Parts[1].padStart(5, "0");
+    
+        scheduleLoaded = true;
+    }
 });
 function setMode(mode)
 {
