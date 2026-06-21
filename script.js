@@ -168,4 +168,21 @@ function saveSchedule()
     console.log(
         "Schedule Sent:",
         payload);
+
+    const status =
+        document.getElementById(
+            "saveStatus");
+
+    status.innerText =
+        "✓ Schedule Saved";
+
+    status.classList.add(
+        "show");
+
+    setTimeout(() => {
+
+        status.classList.remove(
+            "show");
+
+    }, 3000);
 }
