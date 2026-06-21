@@ -31,21 +31,45 @@
     </div>
     <div class="card">
 
-    <h2>Controls</h2>
+        <h2>Controls</h2>
 
-    <button onclick="setMode('AUTO')">
-        AUTO
-    </button>
+        <button onclick="setMode('AUTO')">
+            AUTO
+        </button>
 
-    <button onclick="setMode('FORCE_ON')">
-        FORCE ON
-    </button>
+        <button onclick="setMode('FORCE_ON')">
+            FORCE ON
+        </button>
 
-    <button onclick="setMode('FORCE_OFF')">
-        FORCE OFF
-    </button>
+        <button onclick="setMode('FORCE_OFF')">
+            FORCE OFF
+        </button>
 
-</div>
+    </div>
+
+    <div class="card">
+
+        <h2>Schedule Editor</h2>
+    
+        <p>Slot 1 ON</p>
+        <input type="time" id="slot1On">
+    
+        <p>Slot 1 OFF</p>
+        <input type="time" id="slot1Off">
+    
+        <p>Slot 2 ON</p>
+        <input type="time" id="slot2On">
+    
+        <p>Slot 2 OFF</p>
+        <input type="time" id="slot2Off">
+    
+        <br><br>
+    
+        <button onclick="saveSchedule()">
+            SAVE SCHEDULE
+        </button>
+
+    </div>
 
 </div>
 
