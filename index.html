@@ -116,29 +116,45 @@
         </button>
     </div>
 
-    <div class="card">
+    <div class="schedule-editor-grid">
 
-        <h2>Schedule Editor</h2>
-    
-        <p>Slot 1 ON</p>
+    <div class="schedule-box">
+
+        <h3>Slot 1</h3>
+
+        <label>ON</label>
         <input type="time" id="slot1On">
-    
-        <p>Slot 1 OFF</p>
+
+        <label>OFF</label>
         <input type="time" id="slot1Off">
-    
-        <p>Slot 2 ON</p>
-        <input type="time" id="slot2On">
-    
-        <p>Slot 2 OFF</p>
-        <input type="time" id="slot2Off">
-    
-        <br><br>
-    
-        <button onclick="saveSchedule()">
-            SAVE SCHEDULE
-        </button>
 
     </div>
+
+    <div class="schedule-box">
+
+        <h3>Slot 2</h3>
+
+        <label>ON</label>
+        <input type="time" id="slot2On">
+
+        <label>OFF</label>
+        <input type="time" id="slot2Off">
+
+    </div>
+
+</div>
+
+<div class="save-section">
+
+    <button
+        class="save-btn"
+        onclick="saveSchedule()">
+
+        SAVE SCHEDULE
+
+    </button>
+
+</div>
 
 </div>
 
