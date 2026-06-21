@@ -186,3 +186,41 @@ function saveSchedule()
 
     }, 3000);
 }
+function updateSlotStates()
+{
+    const slot1Enabled =
+        document.getElementById(
+            "slot1Enabled").checked;
+
+    const slot2Enabled =
+        document.getElementById(
+            "slot2Enabled").checked;
+
+    document.getElementById(
+        "slot1On").disabled =
+        !slot1Enabled;
+
+    document.getElementById(
+        "slot1Off").disabled =
+        !slot1Enabled;
+
+    document.getElementById(
+        "slot2On").disabled =
+        !slot2Enabled;
+
+    document.getElementById(
+        "slot2Off").disabled =
+        !slot2Enabled;
+}
+document
+.getElementById("slot1Enabled")
+.addEventListener(
+    "change",
+    updateSlotStates);
+
+document
+.getElementById("slot2Enabled")
+.addEventListener(
+    "change",
+    updateSlotStates);
+updateSlotStates();
