@@ -7,7 +7,8 @@ const options = {
     username: "aquarium_admin",
     password: "sdey123A"
 };
-
+let lastMessageTime =
+    Date.now();
 const client = mqtt.connect(options);
 
 client.on("connect", () => {
@@ -22,6 +23,8 @@ client.on("message", (topic, message) => {
     const data =
         JSON.parse(
             message.toString());
+    lastMessageTime =
+    Date.now();
 
     // MODE BADGE
 
@@ -234,3 +237,26 @@ document
     "change",
     updateSlotStates);
 updateSlotStates();
+
+setInterval(() =>
+{
+    if(
+        Date.now() -
+        lastMessageTime >
+        30000
+    )
+    {
+        document
+        .getElementById(
+            "onlineBadge")
+        .innerText =
+            "● OFFLINE";
+
+        document
+        .getElementById(
+            "onlineBadge")
+        .className =
+            "badge offline";
+    }
+
+}, 1000);
