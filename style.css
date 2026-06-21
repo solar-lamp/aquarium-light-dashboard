@@ -1,7 +1,13 @@
 body {
     margin: 0;
     font-family: Arial, sans-serif;
-    background: #0f172a;
+    background:
+    linear-gradient(
+    135deg,
+    #020617,
+    #0f172a,
+    #082f49,
+    #0c4a6e);
     color: white;
 }
 
@@ -17,11 +23,15 @@ h1 {
 }
 
 .card {
-    background: rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.07);
+    border: 1px solid rgba(255,255,255,0.1);
     border-radius: 15px;
     padding: 20px;
     margin-bottom: 20px;
     backdrop-filter: blur(10px);
+    box-shadow:
+    0 8px 32px
+    rgba(0,0,0,0.3);
 }
 
 h2 {
@@ -82,6 +92,10 @@ input[type="time"] {
 
 .light-on {
     background: rgba(255,215,0,0.2);
+
+    box-shadow:
+    0 0 15px
+    rgba(255,215,0,0.5);
 }
 
 .light-off {
@@ -120,4 +134,29 @@ button {
 
 .offline {
     color: #ef4444;
+}
+.online {
+    animation:
+    pulse 2s infinite;
+}
+
+@keyframes pulse {
+
+    0% {
+        box-shadow:
+        0 0 0 0
+        rgba(74,222,128,0.4);
+    }
+
+    70% {
+        box-shadow:
+        0 0 0 12px
+        rgba(74,222,128,0);
+    }
+
+    100% {
+        box-shadow:
+        0 0 0 0
+        rgba(74,222,128,0);
+    }
 }
