@@ -15,14 +15,43 @@
     <h1>🐠 Aquarium Light Controller</h1>
 
     <div class="card">
-        <h2>Device Status</h2>
 
-        <p>Online: <span id="online">--</span></p>
-        <p>Mode: <span id="mode">--</span></p>
-        <p>Light: <span id="light">--</span></p>
-        <p>Current Time: <span id="time">--</span></p>
+        <h2>System Status</h2>
+    
+        <div class="status-grid">
+    
+            <div class="status-item">
+                <div class="label">ONLINE</div>
+                <div id="onlineBadge" class="badge online">
+                    ● ONLINE
+                </div>
+            </div>
+    
+            <div class="status-item">
+                <div class="label">LIGHT</div>
+                <div id="lightBadge" class="badge light-off">
+                    OFF
+                </div>
+            </div>
+    
+            <div class="status-item">
+                <div class="label">MODE</div>
+                <div id="modeBadge" class="badge mode">
+                    AUTO
+                </div>
+            </div>
+    
+            <div class="status-item">
+                <div class="label">TIME</div>
+                <div id="time">
+                    00:00:00
+                </div>
+            </div>
+    
+        </div>
+
     </div>
-
+    
     <div class="card">
         <h2>Schedule</h2>
 
