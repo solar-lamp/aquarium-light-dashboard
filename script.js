@@ -51,3 +51,31 @@ function setMode(mode)
         "Mode Sent:",
         mode);
 }
+function saveSchedule()
+{
+    const slot1On =
+        document.getElementById("slot1On").value;
+
+    const slot1Off =
+        document.getElementById("slot1Off").value;
+
+    const slot2On =
+        document.getElementById("slot2On").value;
+
+    const slot2Off =
+        document.getElementById("slot2Off").value;
+
+    const payload =
+        slot1On + "," +
+        slot1Off + "," +
+        slot2On + "," +
+        slot2Off;
+
+    client.publish(
+        "aquarium/schedule",
+        payload);
+
+    console.log(
+        "Schedule Sent:",
+        payload);
+}
