@@ -40,6 +40,23 @@ client.on("message", (topic, message) => {
 
     document.getElementById("slot2").innerText =
         data.slot2;
+    const slot1Parts =
+    data.slot1.split("-");
+
+const slot2Parts =
+    data.slot2.split("-");
+
+document.getElementById("slot1On").value =
+    slot1Parts[0].padStart(5, "0");
+
+document.getElementById("slot1Off").value =
+    slot1Parts[1].padStart(5, "0");
+
+document.getElementById("slot2On").value =
+    slot2Parts[0].padStart(5, "0");
+
+document.getElementById("slot2Off").value =
+    slot2Parts[1].padStart(5, "0");
 });
 function setMode(mode)
 {
