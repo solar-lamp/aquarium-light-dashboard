@@ -18,8 +18,14 @@
             src="aquarium.jpg"
             class="hero-image">
     
-        <div class="hero-overlay">
-    
+        <div class="hero">
+
+    <img
+        src="aquarium.jpg"
+        class="hero-image">
+
+    <div class="hero-overlay">
+
             <div class="hero-content">
     
                 <h1>
@@ -30,53 +36,40 @@
                     Cloud Connected Lighting System
                 </p>
     
+                <div class="hero-status">
+    
+                    <div id="onlineBadge"
+                         class="badge online">
+                         ● ONLINE
+                    </div>
+    
+                    <div id="lightBadge"
+                         class="badge light-off">
+                         OFF
+                    </div>
+    
+                    <div id="modeBadge"
+                         class="badge mode">
+                         AUTO
+                    </div>
+    
+                </div>
+    
             </div>
     
         </div>
     
     </div>
 
-    <div class="card">
-
-        <h2>System Status</h2>
     
-        <div class="status-grid">
-    
-            <div class="status-item">
-                <div class="label">ONLINE</div>
-                <div id="onlineBadge" class="badge online">
-                    ● ONLINE
-                </div>
-            </div>
-    
-            <div class="status-item">
-                <div class="label">LIGHT</div>
-                <div id="lightBadge" class="badge light-off">
-                    OFF
-                </div>
-            </div>
-    
-            <div class="status-item">
-                <div class="label">MODE</div>
-                <div id="modeBadge" class="badge mode">
-                    AUTO
-                </div>
-            </div>
-    
-            <div class="status-item">
-                <div class="label">TIME</div>
-                <div id="time">
-                    00:00:00
-                </div>
-            </div>
-    
-        </div>
-
-    </div>
     
     <div class="card">
     
         <h2>Lighting Schedule</h2>
+        <p>
+        Current Time:
+        <span id="time">00:00:00</span>
+        </p>
     
         <div class="status-grid">
     
