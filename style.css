@@ -453,3 +453,11 @@ input:checked + .slider:before {
 
     margin-bottom: 15px;
 }
+input:disabled {
+
+    opacity: 0.4;
+
+    cursor: not-allowed;
+
+    filter: grayscale(100%);
+}
