@@ -23,40 +23,108 @@ client.on("message", (topic, message) => {
         JSON.parse(
             message.toString());
 
-    document.getElementById("online").innerText =
-        data.online;
+    // MODE BADGE
 
-    document.getElementById("mode").innerText =
+    document.getElementById("modeBadge").innerText =
         data.mode;
 
-    document.getElementById("light").innerText =
-        data.light;
+    // ACTIVE BUTTON HIGHLIGHT
+
+    document.getElementById("autoBtn")
+        .classList.remove("active-mode");
+
+    document.getElementById("forceOnBtn")
+        .classList.remove("active-mode");
+
+    document.getElementById("forceOffBtn")
+        .classList.remove("active-mode");
+
+    if(data.mode === "AUTO")
+    {
+        document.getElementById("autoBtn")
+            .classList.add("active-mode");
+    }
+    else if(data.mode === "FORCE_ON")
+    {
+        document.getElementById("forceOnBtn")
+            .classList.add("active-mode");
+    }
+    else if(data.mode === "FORCE_OFF")
+    {
+        document.getElementById("forceOffBtn")
+            .classList.add("active-mode");
+    }
+
+    // ONLINE STATUS
+
+    if(data.online)
+    {
+        document.getElementById("onlineBadge").innerText =
+            "● ONLINE";
+
+        document.getElementById("onlineBadge").className =
+            "badge online";
+    }
+    else
+    {
+        document.getElementById("onlineBadge").innerText =
+            "● OFFLINE";
+
+        document.getElementById("onlineBadge").className =
+            "badge offline";
+    }
+
+    // LIGHT STATUS
+
+    if(data.light === "ON")
+    {
+        document.getElementById("lightBadge").innerText =
+            "💡 ON";
+
+        document.getElementById("lightBadge").className =
+            "badge light-on";
+    }
+    else
+    {
+        document.getElementById("lightBadge").innerText =
+            "🌙 OFF";
+
+        document.getElementById("lightBadge").className =
+            "badge light-off";
+    }
+
+    // TIME
 
     document.getElementById("time").innerText =
         data.time;
+
+    // SCHEDULE DISPLAY
 
     document.getElementById("slot1").innerText =
         data.slot1;
 
     document.getElementById("slot2").innerText =
         data.slot2;
+
+    // AUTO-FILL EDITOR
+
     const slot1Parts =
-    data.slot1.split("-");
+        data.slot1.split("-");
 
-const slot2Parts =
-    data.slot2.split("-");
+    const slot2Parts =
+        data.slot2.split("-");
 
-document.getElementById("slot1On").value =
-    slot1Parts[0].padStart(5, "0");
+    document.getElementById("slot1On").value =
+        slot1Parts[0];
 
-document.getElementById("slot1Off").value =
-    slot1Parts[1].padStart(5, "0");
+    document.getElementById("slot1Off").value =
+        slot1Parts[1];
 
-document.getElementById("slot2On").value =
-    slot2Parts[0].padStart(5, "0");
+    document.getElementById("slot2On").value =
+        slot2Parts[0];
 
-document.getElementById("slot2Off").value =
-    slot2Parts[1].padStart(5, "0");
+    document.getElementById("slot2Off").value =
+        slot2Parts[1];
 });
 function setMode(mode)
 {
