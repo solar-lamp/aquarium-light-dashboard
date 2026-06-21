@@ -53,27 +53,49 @@
     </div>
     
     <div class="card">
-        <h2>Schedule</h2>
+    
+        <h2>Lighting Schedule</h2>
+    
+        <div class="status-grid">
+    
+            <div class="status-item">
+                <div class="label">SLOT 1</div>
+                <div id="slot1">
+                    --:-- → --:--
+                </div>
+            </div>
+    
+            <div class="status-item">
+                <div class="label">SLOT 2</div>
+                <div id="slot2">
+                    --:-- → --:--
+                </div>
+            </div>
+    
+        </div>
 
-        <p>Slot 1: <span id="slot1">--</span></p>
-        <p>Slot 2: <span id="slot2">--</span></p>
     </div>
     <div class="card">
 
         <h2>Controls</h2>
 
-        <button onclick="setMode('AUTO')">
+        <button
+            id="autoBtn"
+            onclick="setMode('AUTO')">
             AUTO
         </button>
-
-        <button onclick="setMode('FORCE_ON')">
+    
+        <button
+            id="forceOnBtn"
+            onclick="setMode('FORCE_ON')">
             FORCE ON
         </button>
-
-        <button onclick="setMode('FORCE_OFF')">
+    
+        <button
+            id="forceOffBtn"
+            onclick="setMode('FORCE_OFF')">
             FORCE OFF
         </button>
-
     </div>
 
     <div class="card">
