@@ -346,3 +346,20 @@ button {
 
     color: white;
 }
+.save-status {
+
+    margin-top: 15px;
+
+    font-weight: bold;
+
+    color: #4ade80;
+
+    opacity: 0;
+
+    transition: opacity 0.3s ease;
+}
+
+.save-status.show {
+
+    opacity: 1;
+}
