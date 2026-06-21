@@ -91,3 +91,33 @@ input[type="time"] {
 .mode {
     background: rgba(0,120,255,0.2);
 }
+.active-mode {
+    border: 2px solid #4ade80;
+    transform: scale(1.05);
+    box-shadow: 0 0 15px rgba(74,222,128,0.4);
+}
+
+#time {
+    font-size: 20px;
+    font-weight: bold;
+}
+
+.card {
+    transition: 0.3s;
+}
+
+.card:hover {
+    transform: translateY(-3px);
+}
+
+button {
+    transition: all 0.3s ease;
+}
+
+.online {
+    color: #4ade80;
+}
+
+.offline {
+    color: #ef4444;
+}
