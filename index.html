@@ -1,1 +1,38 @@
-Hello Aquarium
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Aquarium Light Controller</title>
+
+    <link rel="stylesheet" href="style.css">
+
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+</head>
+
+<body>
+
+<div class="container">
+
+    <h1>🐠 Aquarium Light Controller</h1>
+
+    <div class="card">
+        <h2>Device Status</h2>
+
+        <p>Online: <span id="online">--</span></p>
+        <p>Mode: <span id="mode">--</span></p>
+        <p>Light: <span id="light">--</span></p>
+        <p>Current Time: <span id="time">--</span></p>
+    </div>
+
+    <div class="card">
+        <h2>Schedule</h2>
+
+        <p>Slot 1: <span id="slot1">--</span></p>
+        <p>Slot 2: <span id="slot2">--</span></p>
+    </div>
+
+</div>
+
+<script src="script.js"></script>
+
+</body>
+</html>
