@@ -41,3 +41,13 @@ client.on("message", (topic, message) => {
     document.getElementById("slot2").innerText =
         data.slot2;
 });
+function setMode(mode)
+{
+    client.publish(
+        "aquarium/control",
+        mode);
+
+    console.log(
+        "Mode Sent:",
+        mode);
+}
