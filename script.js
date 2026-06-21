@@ -155,11 +155,21 @@ function saveSchedule()
     const slot2Off =
         document.getElementById("slot2Off").value;
 
-    const payload =
-        slot1On + "," +
-        slot1Off + "," +
-        slot2On + "," +
-        slot2Off;
+    const slot1Enabled =
+    document.getElementById(
+        "slot1Enabled").checked ? 1 : 0;
+
+const slot2Enabled =
+    document.getElementById(
+        "slot2Enabled").checked ? 1 : 0;
+
+const payload =
+    slot1Enabled + "," +
+    slot1On + "," +
+    slot1Off + "," +
+    slot2Enabled + "," +
+    slot2On + "," +
+    slot2Off;
 
     client.publish(
         "aquarium/schedule",
