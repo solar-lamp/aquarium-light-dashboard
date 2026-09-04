@@ -296,3 +296,135 @@ setInterval(() =>
     }
 
 }, 1000);
+
+// =========================================================
+// HERO BUBBLE SCENE (three.js)
+// Purely decorative — rising, looping glass-bubble field
+// rendered inside the hero image. Skipped entirely if the
+// visitor prefers reduced motion, or if three.js fails to load.
+// =========================================================
+
+function initBubbleScene()
+{
+    const prefersReducedMotion =
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    const canvas = document.getElementById("bubbleCanvas");
+
+    if(!canvas || prefersReducedMotion || typeof THREE === "undefined")
+    {
+        return;
+    }
+
+    const hero = canvas.closest(".hero");
+
+    const renderer = new THREE.WebGLRenderer({
+        canvas: canvas,
+        alpha: true,
+        antialias: true
+    });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+    const scene = new THREE.Scene();
+
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+    camera.position.set(0, 0, 18);
+
+    // Lighting — a cool key light plus a warm rim light, echoing
+    // the tank's own overhead lamps.
+    scene.add(new THREE.AmbientLight(0x2dd4c8, 0.5));
+
+    const key = new THREE.PointLight(0x9fe8ff, 1.4, 60);
+    key.position.set(-8, 10, 12);
+    scene.add(key);
+
+    const rim = new THREE.PointLight(0xffb454, 0.8, 60);
+    rim.position.set(10, -6, 6);
+    scene.add(rim);
+
+    // Bubble field
+    const BUBBLE_COUNT = 34;
+    const bubbleGeo = new THREE.SphereGeometry(1, 16, 16);
+    const bubbleMat = new THREE.MeshPhongMaterial({
+        color: 0xbdf4ff,
+        transparent: true,
+        opacity: 0.28,
+        shininess: 120,
+        specular: 0xffffff
+    });
+
+    const bubbles = [];
+
+    function resetBubble(b, randomizeHeight)
+    {
+        b.userData.speed = 0.6 + Math.random() * 1.1;
+        b.userData.drift = (Math.random() - 0.5) * 0.4;
+        b.userData.wobble = Math.random() * Math.PI * 2;
+        const scale = 0.12 + Math.random() * 0.5;
+        b.scale.setScalar(scale);
+        b.position.x = (Math.random() - 0.5) * 22;
+        b.position.z = (Math.random() - 0.5) * 10;
+        b.position.y = randomizeHeight
+            ? (Math.random() - 0.5) * 16
+            : -9 - Math.random() * 4;
+    }
+
+    for(let i = 0; i < BUBBLE_COUNT; i++)
+    {
+        const b = new THREE.Mesh(bubbleGeo, bubbleMat);
+        resetBubble(b, true);
+        bubbles.push(b);
+        scene.add(b);
+    }
+
+    function resize()
+    {
+        const rect = hero.getBoundingClientRect();
+        renderer.setSize(rect.width, rect.height, false);
+        camera.aspect = rect.width / Math.max(rect.height, 1);
+        camera.updateProjectionMatrix();
+    }
+
+    resize();
+    window.addEventListener("resize", resize);
+
+    let lastFrame = performance.now();
+
+    function animate(now)
+    {
+        requestAnimationFrame(animate);
+
+        // Pause work entirely when the tab isn't visible.
+        if(document.hidden)
+        {
+            return;
+        }
+
+        const dt = Math.min((now - lastFrame) / 1000, 0.05);
+        lastFrame = now;
+
+        bubbles.forEach((b) => {
+            b.position.y += b.userData.speed * dt;
+            b.userData.wobble += dt * 1.5;
+            b.position.x += Math.sin(b.userData.wobble) * b.userData.drift * dt;
+
+            if(b.position.y > 9)
+            {
+                resetBubble(b, false);
+            }
+        });
+
+        renderer.render(scene, camera);
+    }
+
+    requestAnimationFrame(animate);
+}
+
+if(document.readyState === "loading")
+{
+    document.addEventListener("DOMContentLoaded", initBubbleScene);
+}
+else
+{
+    initBubbleScene();
+}
