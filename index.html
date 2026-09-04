@@ -1,213 +1,161 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Aquarium Light Controller</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aquarium Light Controller</title>
 
-    <link rel="stylesheet" href="style.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 
-    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<link rel="stylesheet" href="style.css">
+
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<script src="https://unpkg.com/three@0.128.0/build/three.min.js"></script>
 </head>
 
 <body>
 
 <div class="container">
+
     <div class="hero">
 
-    <img
-        src="aquarium.jpg.jpeg"
-        class="hero-image">
+        <img src="aquarium.jpg.jpeg" class="hero-image" alt="The planted aquarium this controller manages">
 
-    <div class="hero-overlay">
+        <canvas id="bubbleCanvas" class="hero-canvas" aria-hidden="true"></canvas>
+
+        <div class="hero-overlay">
 
             <div class="hero-content">
-    
-                <h1>
-                    Smart Aquarium Controller
-                </h1>
-    
-                <p>
-                    Cloud Connected Lighting System
-                </p>
-    
+
+                <h1>Aquarium Light</h1>
+
+                <p>Runs on schedule, checks in over the internet, keeps its own clock either way.</p>
+
                 <div class="hero-status">
-    
-                    <div
-                        id="onlineBadge"
-                        class="badge online">
-                        ● ONLINE
-                    </div>
-    
-                    <div
-                        id="lightBadge"
-                        class="badge light-off">
-                        OFF
-                    </div>
-    
-                    <div
-                        id="modeBadge"
-                        class="badge mode">
-                        AUTO
-                    </div>
-    
+
+                    <div id="onlineBadge" class="badge online">● Online</div>
+                    <div id="lightBadge" class="badge light-off">Off</div>
+                    <div id="modeBadge" class="badge mode">Auto</div>
+
                 </div>
-    
+
             </div>
-    
+
         </div>
-    
+
     </div>
-        
-    
-    <div class="card">
-    
-        <h2>Lighting Schedule</h2>
-    <div
-        style="
-        font-size:22px;
-        font-weight:bold;
-        margin-bottom:15px;">
-    
-        🕒
-        <span id="time">
-            00:00:00
-        </span>
-    
-    </div>
-    
-        <div class="status-grid">
-    
-            <div class="status-item">
-                <div class="label">SLOT 1</div>
-                <div id="slot1">
-                    --:-- → --:--
+
+    <div class="dashboard-grid">
+
+        <div class="card status-card">
+
+            <h2>Right now</h2>
+
+            <div class="clock">
+                <span id="time">00:00:00</span>
+            </div>
+
+            <div class="status-grid">
+
+                <div class="status-item">
+                    <div class="label">Slot 1</div>
+                    <div id="slot1">--:-- → --:--</div>
                 </div>
-            </div>
-    
-            <div class="status-item">
-                <div class="label">SLOT 2</div>
-                <div id="slot2">
-                    --:-- → --:--
+
+                <div class="status-item">
+                    <div class="label">Slot 2</div>
+                    <div id="slot2">--:-- → --:--</div>
                 </div>
+
             </div>
-    
+
+        </div>
+
+        <div class="card controls-card">
+
+            <h2>Mode</h2>
+
+            <div class="button-row">
+
+                <button id="autoBtn" onclick="setMode('AUTO')">Auto</button>
+                <button id="forceOnBtn" onclick="setMode('FORCE_ON')">Force on</button>
+                <button id="forceOffBtn" onclick="setMode('FORCE_OFF')">Force off</button>
+
+            </div>
+
+        </div>
+
+        <div class="card editor-card">
+
+            <h2>Schedule</h2>
+
+            <div class="schedule-editor-grid">
+
+                <div class="schedule-box">
+
+                    <div class="slot-header">
+                        <h3>Slot 1</h3>
+                        <label class="switch">
+                            <input type="checkbox" id="slot1Enabled" checked>
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+
+                    <label for="slot1On">On</label>
+                    <input type="time" id="slot1On">
+
+                    <label for="slot1Off">Off</label>
+                    <input type="time" id="slot1Off">
+
+                </div>
+
+                <div class="schedule-box">
+
+                    <div class="slot-header">
+                        <h3>Slot 2</h3>
+                        <label class="switch">
+                            <input type="checkbox" id="slot2Enabled" checked>
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+
+                    <label for="slot2On">On</label>
+                    <input type="time" id="slot2On">
+
+                    <label for="slot2Off">Off</label>
+                    <input type="time" id="slot2Off">
+
+                </div>
+
+            </div>
+
+            <div class="save-section">
+
+                <button class="save-btn" onclick="saveSchedule()">Save schedule</button>
+                <div id="saveStatus" class="save-status"></div>
+
+            </div>
+
+        </div>
+
+        <div class="card danger-card">
+
+            <h2>Device network</h2>
+
+            <p class="wifi-hint">
+                Switching the device to a different WiFi network needs a one-time
+                setup step. This restarts it into its own hotspot
+                (<strong>AquariumLight_Setup</strong>) — join that from your phone
+                or laptop to enter the new network's credentials.
+            </p>
+
+            <button id="resetWifiBtn" class="danger-btn" onclick="resetWifi()">Reconfigure WiFi</button>
+
         </div>
 
     </div>
-    <div class="card">
-
-        <h2>Controls</h2>
-
-        <button
-            id="autoBtn"
-            onclick="setMode('AUTO')">
-            AUTO
-        </button>
-    
-        <button
-            id="forceOnBtn"
-            onclick="setMode('FORCE_ON')">
-            FORCE ON
-        </button>
-    
-        <button
-            id="forceOffBtn"
-            onclick="setMode('FORCE_OFF')">
-            FORCE OFF
-        </button>
-    </div>
-
-    <div class="card">
-
-        <h2>Device Network</h2>
-
-        <p class="wifi-hint">
-            Use this if you need to switch the device to a different WiFi network.
-            It will disconnect and open its own setup hotspot
-            (<strong>AquariumLight_Setup</strong>) — connect to that from your
-            phone or laptop to enter the new WiFi credentials.
-        </p>
-
-        <button
-            id="resetWifiBtn"
-            class="danger-btn"
-            onclick="resetWifi()">
-            Reconfigure WiFi
-        </button>
-    </div>
-
-    <div class="schedule-editor-grid">
-
-    <div class="schedule-box">
-
-        <div class="slot-header">
-
-            <h3>Slot 1</h3>
-        
-            <label class="switch">
-        
-                <input
-                    type="checkbox"
-                    id="slot1Enabled"
-                    checked>
-        
-                <span class="slider"></span>
-        
-            </label>
-        
-        </div>
-
-        <label>ON</label>
-        <input type="time" id="slot1On">
-
-        <label>OFF</label>
-        <input type="time" id="slot1Off">
-
-    </div>
-
-    <div class="schedule-box">
-
-        <div class="slot-header">
-
-            <h3>Slot 2</h3>
-        
-            <label class="switch">
-        
-                <input
-                    type="checkbox"
-                    id="slot2Enabled"
-                    checked>
-        
-                <span class="slider"></span>
-        
-            </label>
-        
-        </div>
-
-        <label>ON</label>
-        <input type="time" id="slot2On">
-
-        <label>OFF</label>
-        <input type="time" id="slot2Off">
-
-    </div>
-
-</div>
-
-<div class="save-section">
-
-    <button class="save-btn"
-            onclick="saveSchedule()">
-
-        SAVE SCHEDULE
-
-    </button>
-
-    <div id="saveStatus"
-         class="save-status">
-
-    </div>
-
-</div>
 
 </div>
 
