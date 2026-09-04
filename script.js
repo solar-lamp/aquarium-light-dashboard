@@ -144,6 +144,42 @@ function setMode(mode)
         "Mode Sent:",
         mode);
 }
+function resetWifi()
+{
+    const confirmed = confirm(
+        "This will disconnect the device from WiFi and restart it into " +
+        "setup mode (AquariumLight_Setup). You'll need to connect to that " +
+        "hotspot directly to enter new WiFi credentials. Continue?");
+
+    if(!confirmed)
+    {
+        return;
+    }
+
+    client.publish(
+        "aquarium/control",
+        "RESET_WIFI");
+
+    console.log(
+        "WiFi Reset Sent");
+
+    const status =
+        document.getElementById(
+            "saveStatus");
+
+    status.innerText =
+        "⚠ WiFi reset sent — device will restart";
+
+    status.classList.add(
+        "show");
+
+    setTimeout(() => {
+
+        status.classList.remove(
+            "show");
+
+    }, 5000);
+}
 function saveSchedule()
 {
     const slot1On =
