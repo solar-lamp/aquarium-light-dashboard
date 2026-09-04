@@ -346,6 +346,30 @@ button {
 
     color: white;
 }
+
+.wifi-hint {
+
+    opacity: 0.75;
+
+    font-size: 14px;
+
+    line-height: 1.5;
+
+    margin-bottom: 15px;
+}
+
+.danger-btn {
+
+    background:
+    linear-gradient(
+        135deg,
+        #b91c1c,
+        #f97316);
+
+    color: white;
+
+    font-weight: bold;
+}
 .save-status {
 
     margin-top: 15px;
