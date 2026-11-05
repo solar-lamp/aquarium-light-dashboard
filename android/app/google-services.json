@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "597036519626",
+    "project_id": "aquarium-e0f18",
+    "storage_bucket": "aquarium-e0f18.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:597036519626:android:787e7b5143137468f9a433",
+        "android_client_info": {
+          "package_name": "com.solarlamp.aquariumlight"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "597036519626-i6cbotd23u650qrobq59pekckmufp13m.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.solarlamp.aquariumlight",
+            "certificate_hash": "5a67c604ff4c87ac677f7f7e7638687828ed8916"
+          }
+        },
+        {
+          "client_id": "597036519626-jmvf6b466u5mlr0tan8qgqleoa3j7moj.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyABa6YROwFjshxUiw0LR5lcmextMDHWyks"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "597036519626-jmvf6b466u5mlr0tan8qgqleoa3j7moj.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

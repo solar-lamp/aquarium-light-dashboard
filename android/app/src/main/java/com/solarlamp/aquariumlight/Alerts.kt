@@ -68,6 +68,34 @@ class Alerts(private val context: Context) {
             .build())
     }
 
+    fun feedingReminder(time: String) {
+        post(ID_FEEDING, alert(CHANNEL_FEEDING)
+            .setContentTitle("Time to feed the fish")
+            .setContentText("Feeding time $time. Tap \"Fed\" in the app once done so nobody feeds twice.")
+            .setStyle(NotificationCompat.BigTextStyle()
+                .bigText("Feeding time $time. Tap \"Fed\" in the app once done so nobody feeds twice."))
+            .build())
+    }
+
+    /** Someone fed the fish: clear the reminder on this phone too. */
+    fun cancelFeedingReminder() = manager.cancel(ID_FEEDING)
+
+    fun careDue(names: List<String>) {
+        val text = names.joinToString(", ")
+        post(ID_CARE, alert(CHANNEL_CARE)
+            .setContentTitle(if (names.size == 1) "Maintenance due" else "${names.size} maintenance tasks due")
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .build())
+    }
+
+    fun memberRequest(name: String, email: String) {
+        post(ID_MEMBERS + email.hashCode() % 1000, alert(CHANNEL_MEMBERS)
+            .setContentTitle("$name wants to join")
+            .setContentText("$email · open Settings → Members to approve")
+            .build())
+    }
+
     private fun alert(channel: String) =
         NotificationCompat.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_notification)
@@ -103,7 +131,10 @@ class Alerts(private val context: Context) {
             NotificationChannel(CHANNEL_LIGHT,
                 context.getString(R.string.channel_light), NotificationManager.IMPORTANCE_DEFAULT),
             NotificationChannel(CHANNEL_MODE,
-                context.getString(R.string.channel_mode), NotificationManager.IMPORTANCE_LOW)
+                context.getString(R.string.channel_mode), NotificationManager.IMPORTANCE_LOW),
+            NotificationChannel(CHANNEL_FEEDING, "Feeding reminders", NotificationManager.IMPORTANCE_HIGH),
+            NotificationChannel(CHANNEL_CARE, "Maintenance reminders", NotificationManager.IMPORTANCE_DEFAULT),
+            NotificationChannel(CHANNEL_MEMBERS, "Join requests", NotificationManager.IMPORTANCE_DEFAULT),
         ))
     }
 
@@ -112,11 +143,17 @@ class Alerts(private val context: Context) {
         private const val ID_ONLINE = 10
         private const val ID_LIGHT = 11
         private const val ID_MODE = 12
+        private const val ID_FEEDING = 13
+        private const val ID_CARE = 14
+        private const val ID_MEMBERS = 5000
 
         private const val CHANNEL_MONITOR = "monitor"
         private const val CHANNEL_ONLINE = "device_online"
         private const val CHANNEL_LIGHT = "light"
         private const val CHANNEL_MODE = "mode"
+        private const val CHANNEL_FEEDING = "feeding"
+        private const val CHANNEL_CARE = "care"
+        private const val CHANNEL_MEMBERS = "members"
 
         fun modeLabel(mode: String): String = when (mode) {
             "AUTO" -> "Auto"

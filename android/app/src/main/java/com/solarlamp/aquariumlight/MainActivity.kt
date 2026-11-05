@@ -1,157 +1,200 @@
 package com.solarlamp.aquariumlight
 
-import android.annotation.SuppressLint
-import android.content.ActivityNotFoundException
-import android.content.Intent
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
-import android.view.Menu
-import android.view.MenuItem
-import android.webkit.WebChromeClient
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
-import android.webkit.WebView
-import android.webkit.WebViewClient
-import androidx.appcompat.app.AppCompatActivity
-import androidx.webkit.WebViewAssetLoader
-import org.json.JSONObject
-import java.io.ByteArrayInputStream
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.collectAsState
+import androidx.core.content.ContextCompat
+import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.CleaningServices
+import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.Lightbulb
+import androidx.compose.material.icons.rounded.SetMeal
+import androidx.compose.material.icons.rounded.Spa
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavHostController
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
+import com.solarlamp.aquariumlight.data.DeviceRepository
+import com.solarlamp.aquariumlight.ui.components.FloatingNavBar
+import com.solarlamp.aquariumlight.ui.components.NavItem
+import com.solarlamp.aquariumlight.data.Access
+import com.solarlamp.aquariumlight.data.Cloud
+import com.solarlamp.aquariumlight.ui.screens.AccessGate
+import com.solarlamp.aquariumlight.ui.screens.CareScreen
+import com.solarlamp.aquariumlight.ui.screens.FeedingScreen
+import com.solarlamp.aquariumlight.ui.screens.HistoryScreen
+import com.solarlamp.aquariumlight.ui.screens.MembersScreen
+import com.solarlamp.aquariumlight.ui.screens.TankScreen
+import com.solarlamp.aquariumlight.ui.screens.HomeScreen
+import com.solarlamp.aquariumlight.ui.screens.LightScreen
+import com.solarlamp.aquariumlight.ui.screens.SettingsScreen
+import com.solarlamp.aquariumlight.ui.theme.AquariumTheme
+import com.solarlamp.aquariumlight.ui.theme.Ocean
+import com.solarlamp.aquariumlight.ui.theme.oceanBackground
 
-/**
- * Shows the same dashboard as the website. The page files are bundled in the
- * APK; only config.js is generated here, from the broker details in Settings.
- */
-class MainActivity : AppCompatActivity() {
+class MainActivity : ComponentActivity() {
 
-    private lateinit var webView: WebView
-    private lateinit var settings: AppSettings
-    private lateinit var assetLoader: WebViewAssetLoader
-
-    // Broker details the page was last loaded with.
-    private var loadedFingerprint: String? = null
-
-    @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(Ocean.Abyss.copy(alpha = 0f).toArgb()),
+            navigationBarStyle = SystemBarStyle.dark(Ocean.Abyss.copy(alpha = 0f).toArgb()),
+        )
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
 
-        settings = AppSettings(this)
-
-        assetLoader = WebViewAssetLoader.Builder()
-            .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
-            .build()
-
-        webView = findViewById(R.id.webView)
-        webView.settings.javaScriptEnabled = true
-        webView.settings.domStorageEnabled = true
-        webView.settings.allowFileAccess = false
-        webView.webChromeClient = WebChromeClient()   // enables confirm() dialogs
-        webView.webViewClient = DashboardClient()
-
-        loadDashboard()
-
-        if (!settings.hasCredentials) {
-            openSettings()
+        setContent {
+            AquariumTheme {
+                AppRoot()
+            }
         }
 
         MonitorService.sync(this)
     }
 
-    override fun onResume() {
-        super.onResume()
-        webView.onResume()
+    // The live connection only runs while the app is visible.
+    override fun onStart() {
+        super.onStart()
+        DeviceRepository.start(this)
+    }
 
-        // Pick up broker changes made in Settings.
-        if (settings.connectionFingerprint != loadedFingerprint) {
-            loadDashboard()
+    override fun onStop() {
+        DeviceRepository.stop()
+        super.onStop()
+    }
+}
+
+private object Routes {
+    const val HOME = "home"
+    const val LIGHT = "light"
+    const val FEEDING = "feeding"
+    const val CARE = "care"
+    const val TANK = "tank"
+    const val HISTORY = "history"
+    const val SETTINGS = "settings"
+    const val MEMBERS = "members"
+}
+
+private val tabs = listOf(
+    NavItem(Routes.HOME, "Home", Icons.Rounded.Home),
+    NavItem(Routes.LIGHT, "Light", Icons.Rounded.Lightbulb),
+    NavItem(Routes.FEEDING, "Feeding", Icons.Rounded.SetMeal),
+    NavItem(Routes.CARE, "Care", Icons.Rounded.CleaningServices),
+    NavItem(Routes.TANK, "Fish & plants", Icons.Rounded.Spa),
+)
+
+@Composable
+private fun AppRoot() {
+    val access by Cloud.access.collectAsState()
+    val context = LocalContext.current
+
+    Box(Modifier.fillMaxSize().oceanBackground()) {
+        when (val a = access) {
+            is Access.Approved -> ApprovedApp(isAdmin = a.member.isAdmin)
+            else -> Box(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) { AccessGate(a) }
         }
     }
 
-    override fun onPause() {
-        webView.onPause()
-        super.onPause()
+    // Once approved: refresh last-active, sync the broker login, keep reminders current.
+    val approved = access is Access.Approved
+    LaunchedEffect(approved) {
+        if (!approved) return@LaunchedEffect
+        Cloud.onAppOpened(context)
+        Reminders.rescheduleAll(context)
     }
-
-    override fun onDestroy() {
-        webView.destroy()
-        super.onDestroy()
+    LaunchedEffect(approved) {
+        if (!approved) return@LaunchedEffect
+        Cloud.feedingTimesFlow().collect { Reminders.updateFeedingTimes(context, it) }
     }
+}
 
-    override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        menuInflater.inflate(R.menu.main, menu)
-        return true
-    }
+@Composable
+private fun ApprovedApp(isAdmin: Boolean) {
+    val nav = rememberNavController()
+    val backStack by nav.currentBackStackEntryAsState()
+    val route = backStack?.destination?.route
+    val context = LocalContext.current
 
-    override fun onOptionsItemSelected(item: MenuItem): Boolean = when (item.itemId) {
-        R.id.action_settings -> {
-            openSettings()
-            true
+    // Reminders and alerts need notification permission (Android 13+). Ask once.
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            permission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
-        R.id.action_reload -> {
-            loadDashboard()
-            true
-        }
-        else -> super.onOptionsItemSelected(item)
+        // Admin's first run on this phone: go set up the broker login.
+        if (isAdmin && !AppSettings(context).hasCredentials) nav.navigate(Routes.SETTINGS)
     }
 
-    private fun openSettings() {
-        startActivity(Intent(this, SettingsActivity::class.java))
-    }
-
-    private fun loadDashboard() {
-        loadedFingerprint = settings.connectionFingerprint
-        webView.loadUrl(START_URL)
-    }
-
-    /** Same shape as the website's config.js, filled from Settings. */
-    private fun configScript(): WebResourceResponse {
-        val mqtt = JSONObject()
-            .put("host", settings.host)
-            .put("port", settings.wsPort)
-            .put("protocol", "wss")
-            .put("path", "/mqtt")
-            .put("username", settings.username)
-            .put("password", settings.password)
-
-        val js = "window.AQUARIUM_CONFIG = ${JSONObject().put("mqtt", mqtt)};"
-
-        return WebResourceResponse("text/javascript", "utf-8",
-            ByteArrayInputStream(js.toByteArray(Charsets.UTF_8)))
-    }
-
-    private inner class DashboardClient : WebViewClient() {
-
-        override fun shouldInterceptRequest(
-            view: WebView,
-            request: WebResourceRequest
-        ): WebResourceResponse? {
-            val url = request.url
-
-            if (url.host == WebViewAssetLoader.DEFAULT_DOMAIN && url.path == CONFIG_PATH) {
-                return configScript()
+    Box(Modifier.fillMaxSize()) {
+        NavHost(
+            navController = nav,
+            startDestination = Routes.HOME,
+            modifier = Modifier.fillMaxSize().statusBarsPadding(),
+        ) {
+            composable(Routes.HOME) {
+                HomeScreen(
+                    onOpenSettings = { nav.navigate(Routes.SETTINGS) },
+                    onOpenHistory = { nav.navigate(Routes.HISTORY) },
+                    onOpenLight = { nav.switchTab(Routes.LIGHT) },
+                    onOpen = { nav.switchTab(it) },
+                )
             }
-
-            // Bundled files; anything else (CDN scripts, fonts) loads normally.
-            return assetLoader.shouldInterceptRequest(url)
+            composable(Routes.LIGHT) { LightScreen(isAdmin) }
+            composable(Routes.FEEDING) { FeedingScreen() }
+            composable(Routes.CARE) { CareScreen() }
+            composable(Routes.TANK) { TankScreen() }
+            composable(Routes.HISTORY) { HistoryScreen(onBack = { nav.popBackStack() }, isAdmin = isAdmin) }
+            composable(Routes.SETTINGS) {
+                SettingsScreen(
+                    onBack = { if (!nav.popBackStack()) nav.switchTab(Routes.HOME) },
+                    onOpenMembers = { nav.navigate(Routes.MEMBERS) },
+                )
+            }
+            composable(Routes.MEMBERS) { MembersScreen(onBack = { nav.popBackStack() }) }
         }
 
-        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-            if (request.url.host == WebViewAssetLoader.DEFAULT_DOMAIN) {
-                return false
-            }
-
-            // External links open in the browser, not inside the app.
-            try {
-                startActivity(Intent(Intent.ACTION_VIEW, request.url))
-            } catch (e: ActivityNotFoundException) {
-                // No browser installed; ignore.
-            }
-            return true
+        if (route in tabs.map { it.route }) {
+            FloatingNavBar(
+                items = tabs,
+                current = route,
+                onSelect = { nav.switchTab(it) },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(bottom = 16.dp),
+            )
         }
     }
+}
 
-    companion object {
-        private const val START_URL =
-            "https://${WebViewAssetLoader.DEFAULT_DOMAIN}/assets/web/index.html"
-        private const val CONFIG_PATH = "/assets/web/config.js"
+/** Bottom-bar navigation: one copy of each tab, state kept when switching. */
+private fun NavHostController.switchTab(route: String) {
+    navigate(route) {
+        popUpTo(graph.findStartDestination().id) { saveState = true }
+        launchSingleTop = true
+        restoreState = true
     }
 }

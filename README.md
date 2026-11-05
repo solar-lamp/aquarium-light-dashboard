@@ -23,7 +23,7 @@ the mode and edit the schedule.
 | `config.js` | Broker connection settings for the dashboard |
 | `firmware/Aquarium_Light/` | Arduino sketch for the ESP8266 |
 | `firmware/Aquarium_Light/secrets.example.h` | Template for the firmware's broker credentials |
-| `android/` | Android app (wraps the same dashboard, adds background alerts) |
+| `android/` | Native Android app (its own UI, background alerts) |
 
 ## Dashboard
 
@@ -35,18 +35,35 @@ broker user whose permissions only cover `aquarium/#`, not an admin account.
 
 ## Android app
 
-A native Android app that shows the same dashboard and can notify you when
-something changes, from any network. It isn't on the Play Store: you install
-the APK directly.
+A native Android app (Kotlin, Jetpack Compose) with its own black and
+blue-glass interface. It controls the light and can notify you when something
+changes, from any network. It isn't on the Play Store: you install the APK
+directly.
 
-**Get the APK:** every push to `main` that touches the app or the dashboard
-builds it with GitHub Actions and publishes it as the
+Screens: Home, Light, Feeding, Care (maintenance and water tests),
+Fish & plants, History and Settings. Everything except live light control is
+shared through Firebase and stays in sync across the family's phones.
+
+**Family access:** everyone signs in with Google. The owner
+(`souradeep241@gmail.com`) is the admin. Anyone else sees "Waiting for
+approval" until the admin approves them in *Settings → Members*. Approved
+members receive the broker login automatically. Only the admin can change the
+light schedule, reset the controller's WiFi, manage members and delete history.
+
+**Firebase:** the project config is `android/app/google-services.json`, and
+the database security rules are in `firebase/firestore.rules`. Paste the rules
+into *Firestore Database → Rules* and publish whenever they change. Google
+sign-in only works for APKs signed with the release key below, whose SHA-1 is
+registered in the Firebase project settings.
+
+**Get the APK:** every push to `main` that touches `android/` builds it with GitHub Actions and publishes it as the
 [`app-latest` release](../../releases/tag/app-latest). On your phone, download
 `aquarium-light.apk`, open it and allow installing from your browser when asked.
 Builds from other branches are attached to their Actions run as an artifact.
 
-**First launch:** Settings opens. Enter the broker username and password (the
-host and ports are prefilled). These are stored only on the phone, not in the APK.
+**First launch:** sign in with Google. The admin then enters the broker
+username and password once in Settings; family members get them automatically
+after approval.
 
 **Notifications** (Settings → Notifications):
 
@@ -62,10 +79,9 @@ host and ports are prefilled). These are stored only on the phone, not in the AP
 Changes that happen while your phone has no connection are reported when it
 reconnects.
 
-**How it's built:** the APK bundles `index.html`, `style.css`, `script.js` and
-`aquarium.jpg` from the repo root at build time, so the website and the app
-always show the same dashboard. The app replaces `config.js` with one built from
-your Settings. To build locally, open `android/` in Android Studio, or run
+**How it's built:** the app is independent of the website; changing one
+doesn't affect the other. It talks to the controller over the same MQTT topics.
+To build locally, open `android/` in Android Studio, or run
 `./gradlew assembleRelease` in `android/`.
 
 **Signing key (do this once):** without one, every CI build gets a new

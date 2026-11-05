@@ -1,24 +1,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
-}
-
-// The dashboard lives at the repository root and is shared with the website.
-// It's copied into the APK at build time, so there's only one copy to edit.
-val webRoot = rootProject.projectDir.parentFile
-val webAssetsDir = layout.buildDirectory.dir("generated/webAssets")
-
-val copyWebAssets by tasks.registering(Sync::class) {
-    from(webRoot) {
-        // config.js is deliberately left out: the app serves its own,
-        // built from the broker details entered in Settings.
-        include("index.html", "style.css", "script.js", "aquarium.jpg")
-    }
-    into(webAssetsDir.map { it.dir("web") })
-}
-
-tasks.named("preBuild") {
-    dependsOn(copyWebAssets)
+    id("com.google.gms.google-services")
 }
 
 // Release signing comes from environment variables (set by CI from
@@ -41,9 +24,10 @@ android {
         if (releaseKeystore != null) {
             create("release") {
                 storeFile = file(releaseKeystore)
-                storePassword = System.getenv("SIGNING_STORE_PASSWORD")
-                keyAlias = System.getenv("SIGNING_KEY_ALIAS")
-                keyPassword = System.getenv("SIGNING_KEY_PASSWORD")
+                // Trimmed: secrets pasted on a phone easily pick up a stray space.
+                storePassword = System.getenv("SIGNING_STORE_PASSWORD")?.trim()
+                keyAlias = System.getenv("SIGNING_KEY_ALIAS")?.trim()
+                keyPassword = System.getenv("SIGNING_KEY_PASSWORD")?.trim()
             }
         }
     }
@@ -56,6 +40,15 @@ android {
         }
     }
 
+    buildFeatures {
+        compose = true
+    }
+
+    composeOptions {
+        // Matches Kotlin 1.9.24.
+        kotlinCompilerExtensionVersion = "1.5.14"
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -65,7 +58,11 @@ android {
         jvmTarget = "17"
     }
 
-    sourceSets.getByName("main").assets.srcDir(webAssetsDir)
+    packaging {
+        resources {
+            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+    }
 
     lint {
         abortOnError = false
@@ -74,10 +71,26 @@ android {
 }
 
 dependencies {
+    val composeBom = platform("androidx.compose:compose-bom:2024.09.03")
+    implementation(composeBom)
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.foundation:foundation")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-extended")
+
     implementation("androidx.core:core-ktx:1.13.1")
-    implementation("androidx.appcompat:appcompat:1.7.0")
-    implementation("com.google.android.material:material:1.12.0")
-    implementation("androidx.preference:preference-ktx:1.2.1")
-    implementation("androidx.webkit:webkit:1.11.0")
+    implementation("androidx.activity:activity-compose:1.9.2")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.6")
+    implementation("androidx.navigation:navigation-compose:2.8.2")
+
     implementation("org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5")
+
+    // Shared family data and sign-in
+    implementation(platform("com.google.firebase:firebase-bom:33.5.1"))
+    implementation("com.google.firebase:firebase-auth")
+    implementation("com.google.firebase:firebase-firestore")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
+    implementation("androidx.credentials:credentials:1.3.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.3.0")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
 }

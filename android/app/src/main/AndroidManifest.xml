@@ -19,7 +19,8 @@
 
         <activity
             android:name=".MainActivity"
-            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode"
+            android:windowSoftInputMode="adjustResize"
             android:exported="true"
             android:launchMode="singleTask">
             <intent-filter>
@@ -27,12 +28,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
-        <activity
-            android:name=".SettingsActivity"
-            android:exported="false"
-            android:label="@string/settings_title"
-            android:parentActivityName=".MainActivity" />
 
         <service
             android:name=".MonitorService"
@@ -42,6 +37,10 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Holds a connection to the user's own MQTT broker to deliver aquarium controller alerts" />
         </service>
+
+        <receiver
+            android:name=".ReminderReceiver"
+            android:exported="false" />
 
         <receiver
             android:name=".BootReceiver"
