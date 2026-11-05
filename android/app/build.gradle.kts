@@ -23,9 +23,10 @@ android {
         if (releaseKeystore != null) {
             create("release") {
                 storeFile = file(releaseKeystore)
-                storePassword = System.getenv("SIGNING_STORE_PASSWORD")
-                keyAlias = System.getenv("SIGNING_KEY_ALIAS")
-                keyPassword = System.getenv("SIGNING_KEY_PASSWORD")
+                // Trimmed: secrets pasted on a phone easily pick up a stray space.
+                storePassword = System.getenv("SIGNING_STORE_PASSWORD")?.trim()
+                keyAlias = System.getenv("SIGNING_KEY_ALIAS")?.trim()
+                keyPassword = System.getenv("SIGNING_KEY_PASSWORD")?.trim()
             }
         }
     }
