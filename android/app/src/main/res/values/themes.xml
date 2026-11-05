@@ -1,0 +1,18 @@
+<resources>
+    <color name="bg_deep">#04141C</color>
+    <color name="bg_mid">#0A2B3D</color>
+    <color name="cyan">#2DD4C8</color>
+    <color name="amber">#FFB454</color>
+
+    <style name="Theme.AquariumLight" parent="Theme.MaterialComponents">
+        <item name="colorPrimary">@color/bg_mid</item>
+        <item name="colorPrimaryVariant">@color/bg_deep</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="colorSecondary">@color/cyan</item>
+        <item name="colorOnSecondary">@color/bg_deep</item>
+        <item name="android:colorBackground">@color/bg_deep</item>
+        <item name="android:windowBackground">@color/bg_deep</item>
+        <item name="android:statusBarColor">@color/bg_deep</item>
+        <item name="android:navigationBarColor">@color/bg_deep</item>
+    </style>
+</resources>

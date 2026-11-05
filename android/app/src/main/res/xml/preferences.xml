@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <PreferenceCategory
+        app:iconSpaceReserved="false"
+        app:title="@string/pref_cat_broker">
+
+        <EditTextPreference
+            app:iconSpaceReserved="false"
+            app:defaultValue="8f4859d367254182889b312a863177b0.s1.eu.hivemq.cloud"
+            app:key="broker_host"
+            app:title="@string/pref_host"
+            app:useSimpleSummaryProvider="true" />
+
+        <EditTextPreference
+            app:iconSpaceReserved="false"
+            app:key="broker_username"
+            app:title="@string/pref_username"
+            app:useSimpleSummaryProvider="true" />
+
+        <EditTextPreference
+            app:iconSpaceReserved="false"
+            app:key="broker_password"
+            app:title="@string/pref_password" />
+
+        <EditTextPreference
+            app:defaultValue="8883"
+            app:iconSpaceReserved="false"
+            app:key="broker_tls_port"
+            app:title="@string/pref_tls_port"
+            app:useSimpleSummaryProvider="true" />
+
+        <EditTextPreference
+            app:defaultValue="8884"
+            app:iconSpaceReserved="false"
+            app:key="broker_ws_port"
+            app:title="@string/pref_ws_port"
+            app:useSimpleSummaryProvider="true" />
+
+    </PreferenceCategory>
+
+    <PreferenceCategory
+        app:iconSpaceReserved="false"
+        app:title="@string/pref_cat_notifications">
+
+        <SwitchPreferenceCompat
+            app:defaultValue="false"
+            app:iconSpaceReserved="false"
+            app:key="alerts_enabled"
+            app:summary="@string/pref_alerts_summary"
+            app:title="@string/pref_alerts" />
+
+        <SwitchPreferenceCompat
+            app:defaultValue="true"
+            app:dependency="alerts_enabled"
+            app:iconSpaceReserved="false"
+            app:key="notify_online"
+            app:title="@string/pref_notify_online" />
+
+        <SwitchPreferenceCompat
+            app:defaultValue="true"
+            app:dependency="alerts_enabled"
+            app:iconSpaceReserved="false"
+            app:key="notify_light"
+            app:title="@string/pref_notify_light" />
+
+        <SwitchPreferenceCompat
+            app:defaultValue="false"
+            app:dependency="alerts_enabled"
+            app:iconSpaceReserved="false"
+            app:key="notify_mode"
+            app:title="@string/pref_notify_mode" />
+
+        <Preference
+            app:dependency="alerts_enabled"
+            app:iconSpaceReserved="false"
+            app:key="battery"
+            app:title="@string/pref_battery" />
+
+        <Preference
+            app:iconSpaceReserved="false"
+            app:key="notification_settings"
+            app:summary="@string/pref_notification_settings_summary"
+            app:title="@string/pref_notification_settings" />
+
+    </PreferenceCategory>
+
+    <PreferenceCategory
+        app:iconSpaceReserved="false"
+        app:title="@string/pref_cat_about">
+
+        <Preference
+            app:iconSpaceReserved="false"
+            app:key="version"
+            app:selectable="false"
+            app:title="@string/pref_version" />
+
+    </PreferenceCategory>
+
+</PreferenceScreen>

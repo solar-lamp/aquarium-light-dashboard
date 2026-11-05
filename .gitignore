@@ -10,3 +10,11 @@ build/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Android
+android/.gradle/
+android/**/build/
+android/local.properties
+android/.idea/
+*.jks
+*.keystore
