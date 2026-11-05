@@ -40,17 +40,30 @@ blue-glass interface. It controls the light and can notify you when something
 changes, from any network. It isn't on the Play Store: you install the APK
 directly.
 
-Screens: Home, Light, Settings. Feeding, Care (maintenance and water tests),
-Fish & plants and History are coming next and will be shared across the
-family's phones.
+Screens: Home, Light, Feeding, Care (maintenance and water tests),
+Fish & plants, History and Settings. Everything except live light control is
+shared through Firebase and stays in sync across the family's phones.
+
+**Family access:** everyone signs in with Google. The owner
+(`souradeep241@gmail.com`) is the admin. Anyone else sees "Waiting for
+approval" until the admin approves them in *Settings → Members*. Approved
+members receive the broker login automatically. Only the admin can change the
+light schedule, reset the controller's WiFi, manage members and delete history.
+
+**Firebase:** the project config is `android/app/google-services.json`, and
+the database security rules are in `firebase/firestore.rules`. Paste the rules
+into *Firestore Database → Rules* and publish whenever they change. Google
+sign-in only works for APKs signed with the release key below, whose SHA-1 is
+registered in the Firebase project settings.
 
 **Get the APK:** every push to `main` that touches `android/` builds it with GitHub Actions and publishes it as the
 [`app-latest` release](../../releases/tag/app-latest). On your phone, download
 `aquarium-light.apk`, open it and allow installing from your browser when asked.
 Builds from other branches are attached to their Actions run as an artifact.
 
-**First launch:** Settings opens. Enter the broker username and password (the
-host and ports are prefilled). These are stored only on the phone, not in the APK.
+**First launch:** sign in with Google. The admin then enters the broker
+username and password once in Settings; family members get them automatically
+after approval.
 
 **Notifications** (Settings → Notifications):
 
