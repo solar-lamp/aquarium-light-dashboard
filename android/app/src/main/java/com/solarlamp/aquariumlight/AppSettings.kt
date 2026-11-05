@@ -50,6 +50,21 @@ class AppSettings(context: Context) {
         get() = prefs.getBoolean(KEY_NOTIFY_MODE, false)
         set(value) = prefs.edit().putBoolean(KEY_NOTIFY_MODE, value).apply()
 
+    /** Feeding reminders on this phone. */
+    var feedingReminders: Boolean
+        get() = prefs.getBoolean(KEY_FEEDING_REMINDERS, true)
+        set(value) = prefs.edit().putBoolean(KEY_FEEDING_REMINDERS, value).apply()
+
+    /** Daily "maintenance due" reminder on this phone. */
+    var careReminders: Boolean
+        get() = prefs.getBoolean(KEY_CARE_REMINDERS, true)
+        set(value) = prefs.edit().putBoolean(KEY_CARE_REMINDERS, value).apply()
+
+    /** Last known shared feeding times, so reminders survive a reboot offline. */
+    var cachedFeedingTimes: String
+        get() = text(KEY_FEEDING_TIMES)
+        set(value) = put(KEY_FEEDING_TIMES, value)
+
     val hasCredentials: Boolean
         get() = host.isNotEmpty() && username.isNotEmpty() && password.isNotEmpty()
 
@@ -70,5 +85,8 @@ class AppSettings(context: Context) {
         private const val KEY_NOTIFY_ONLINE = "notify_online"
         private const val KEY_NOTIFY_LIGHT = "notify_light"
         private const val KEY_NOTIFY_MODE = "notify_mode"
+        private const val KEY_FEEDING_REMINDERS = "feeding_reminders"
+        private const val KEY_CARE_REMINDERS = "care_reminders"
+        private const val KEY_FEEDING_TIMES = "feeding_times_cache"
     }
 }

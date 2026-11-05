@@ -1,6 +1,13 @@
 package com.solarlamp.aquariumlight
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.collectAsState
+import androidx.core.content.ContextCompat
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -12,7 +19,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CleaningServices
-import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Lightbulb
 import androidx.compose.material.icons.rounded.SetMeal
@@ -34,7 +40,14 @@ import androidx.navigation.compose.rememberNavController
 import com.solarlamp.aquariumlight.data.DeviceRepository
 import com.solarlamp.aquariumlight.ui.components.FloatingNavBar
 import com.solarlamp.aquariumlight.ui.components.NavItem
-import com.solarlamp.aquariumlight.ui.screens.ComingSoonScreen
+import com.solarlamp.aquariumlight.data.Access
+import com.solarlamp.aquariumlight.data.Cloud
+import com.solarlamp.aquariumlight.ui.screens.AccessGate
+import com.solarlamp.aquariumlight.ui.screens.CareScreen
+import com.solarlamp.aquariumlight.ui.screens.FeedingScreen
+import com.solarlamp.aquariumlight.ui.screens.HistoryScreen
+import com.solarlamp.aquariumlight.ui.screens.MembersScreen
+import com.solarlamp.aquariumlight.ui.screens.TankScreen
 import com.solarlamp.aquariumlight.ui.screens.HomeScreen
 import com.solarlamp.aquariumlight.ui.screens.LightScreen
 import com.solarlamp.aquariumlight.ui.screens.SettingsScreen
@@ -80,6 +93,7 @@ private object Routes {
     const val TANK = "tank"
     const val HISTORY = "history"
     const val SETTINGS = "settings"
+    const val MEMBERS = "members"
 }
 
 private val tabs = listOf(
@@ -92,17 +106,49 @@ private val tabs = listOf(
 
 @Composable
 private fun AppRoot() {
+    val access by Cloud.access.collectAsState()
+    val context = LocalContext.current
+
+    Box(Modifier.fillMaxSize().oceanBackground()) {
+        when (val a = access) {
+            is Access.Approved -> ApprovedApp(isAdmin = a.member.isAdmin)
+            else -> Box(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) { AccessGate(a) }
+        }
+    }
+
+    // Once approved: refresh last-active, sync the broker login, keep reminders current.
+    val approved = access is Access.Approved
+    LaunchedEffect(approved) {
+        if (!approved) return@LaunchedEffect
+        Cloud.onAppOpened(context)
+        Reminders.rescheduleAll(context)
+    }
+    LaunchedEffect(approved) {
+        if (!approved) return@LaunchedEffect
+        Cloud.feedingTimesFlow().collect { Reminders.updateFeedingTimes(context, it) }
+    }
+}
+
+@Composable
+private fun ApprovedApp(isAdmin: Boolean) {
     val nav = rememberNavController()
     val backStack by nav.currentBackStackEntryAsState()
     val route = backStack?.destination?.route
     val context = LocalContext.current
 
-    // First launch: go straight to Settings to enter the broker login.
+    // Reminders and alerts need notification permission (Android 13+). Ask once.
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     LaunchedEffect(Unit) {
-        if (!AppSettings(context).hasCredentials) nav.navigate(Routes.SETTINGS)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            permission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        // Admin's first run on this phone: go set up the broker login.
+        if (isAdmin && !AppSettings(context).hasCredentials) nav.navigate(Routes.SETTINGS)
     }
 
-    Box(Modifier.fillMaxSize().oceanBackground()) {
+    Box(Modifier.fillMaxSize()) {
         NavHost(
             navController = nav,
             startDestination = Routes.HOME,
@@ -116,61 +162,18 @@ private fun AppRoot() {
                     onOpen = { nav.switchTab(it) },
                 )
             }
-            composable(Routes.LIGHT) { LightScreen() }
-            composable(Routes.FEEDING) {
-                ComingSoonScreen(
-                    title = "Feeding",
-                    icon = Icons.Rounded.SetMeal,
-                    summary = "Never feed twice, never forget.",
-                    features = listOf(
-                        "Daily feeding times with reminders on the phones you choose",
-                        "One tap \"Fed\": everyone's reminder clears at once",
-                        "Feeding log with who fed, when, and an optional note",
-                        "Ready for an automatic feeder later",
-                    ),
-                )
-            }
-            composable(Routes.CARE) {
-                ComingSoonScreen(
-                    title = "Care",
-                    icon = Icons.Rounded.CleaningServices,
-                    summary = "Maintenance and water tests in one place.",
-                    features = listOf(
-                        "Water change, glass clean and full tank clean, with due-date reminders",
-                        "Each filter as its own slot, with when it was last cleaned and by whom",
-                        "Water test log: pH, ammonia, nitrite, nitrate, temperature",
-                        "Charts to spot trends early",
-                    ),
-                )
-            }
-            composable(Routes.TANK) {
-                ComingSoonScreen(
-                    title = "Fish & plants",
-                    icon = Icons.Rounded.Spa,
-                    summary = "Everything living in the tank.",
-                    features = listOf(
-                        "Each species with its name and count",
-                        "Date added and notes",
-                        "Additions and losses recorded in history",
-                    ),
-                )
-            }
-            composable(Routes.HISTORY) {
-                ComingSoonScreen(
-                    title = "History",
-                    icon = Icons.Rounded.History,
-                    summary = "Every change, by everyone.",
-                    features = listOf(
-                        "Light changes, feedings, maintenance and tank changes in one feed",
-                        "Who did it and when, from any phone",
-                        "Filter by type or by person",
-                    ),
-                    onBack = { nav.popBackStack() },
-                )
-            }
+            composable(Routes.LIGHT) { LightScreen(isAdmin) }
+            composable(Routes.FEEDING) { FeedingScreen() }
+            composable(Routes.CARE) { CareScreen() }
+            composable(Routes.TANK) { TankScreen() }
+            composable(Routes.HISTORY) { HistoryScreen(onBack = { nav.popBackStack() }, isAdmin = isAdmin) }
             composable(Routes.SETTINGS) {
-                SettingsScreen(onBack = { if (!nav.popBackStack()) nav.switchTab(Routes.HOME) })
+                SettingsScreen(
+                    onBack = { if (!nav.popBackStack()) nav.switchTab(Routes.HOME) },
+                    onOpenMembers = { nav.navigate(Routes.MEMBERS) },
+                )
             }
+            composable(Routes.MEMBERS) { MembersScreen(onBack = { nav.popBackStack() }) }
         }
 
         if (route in tabs.map { it.route }) {

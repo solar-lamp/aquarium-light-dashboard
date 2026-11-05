@@ -37,10 +37,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.solarlamp.aquariumlight.AppSettings
+import com.solarlamp.aquariumlight.data.Access
+import com.solarlamp.aquariumlight.data.Cloud
+import com.solarlamp.aquariumlight.data.LifeType
+import com.solarlamp.aquariumlight.data.formatNumber
 import com.solarlamp.aquariumlight.data.DeviceRepository
 import com.solarlamp.aquariumlight.data.Mode
 import com.solarlamp.aquariumlight.data.nextChange
@@ -63,8 +65,13 @@ fun HomeScreen(
     onOpenLight: () -> Unit,
     onOpen: (String) -> Unit,
 ) {
-    val context = LocalContext.current
-    val name = remember { AppSettings(context).name }
+    val access by Cloud.access.collectAsState()
+    val name = (access as? Access.Approved)?.member?.displayName.orEmpty()
+    val feedingTimes by remember { Cloud.feedingTimesFlow() }.collectAsState(initial = emptyList())
+    val feedings by remember { Cloud.feedingsFlow(limit = 10) }.collectAsState(initial = emptyList())
+    val tasks by remember { Cloud.tasksFlow() }.collectAsState(initial = emptyList())
+    val tests by remember { Cloud.waterTestsFlow(limit = 1) }.collectAsState(initial = emptyList())
+    val life by remember { Cloud.inhabitantsFlow() }.collectAsState(initial = emptyList())
     val state by DeviceRepository.state.collectAsState()
     val now by rememberNow()
     val status = state.status
@@ -183,16 +190,56 @@ fun HomeScreen(
 
         VSpace(26.dp)
 
-        SectionHeader("Coming in the next update")
+        SectionHeader("Today")
+
+        val slots = todaySlots(feedingTimes, feedings, java.time.Instant.ofEpochMilli(now))
+        val nextSlot = slots.firstOrNull { it.state != SlotState.DONE }
+        val dueTasks = tasks.filter { it.lastDoneAt != null && it.isDue }
+        val latestTest = tests.firstOrNull()
+        val fishCount = life.filter { it.type == LifeType.FISH }.sumOf { it.count }
+        val plantCount = life.filter { it.type == LifeType.PLANT }.sumOf { it.count }
 
         Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            Tile(Icons.Rounded.SetMeal, "Feeding", "Reminders", "Shared with family", Modifier.weight(1f)) { onOpen("feeding") }
-            Tile(Icons.Rounded.CleaningServices, "Care", "Maintenance", "Filters, water changes", Modifier.weight(1f)) { onOpen("care") }
+            Tile(
+                icon = Icons.Rounded.SetMeal,
+                title = "Feeding",
+                value = when {
+                    nextSlot != null && nextSlot.state == SlotState.MISSED -> "Due now"
+                    nextSlot != null -> "Next ${nextSlot.time}"
+                    feedingTimes.isNotEmpty() -> "All fed"
+                    else -> "No times set"
+                },
+                caption = feedings.firstOrNull()?.let { "Last: ${it.byName}, ${relativeTime(it.at)}" } ?: "Nothing logged yet",
+                tint = if (nextSlot?.state == SlotState.MISSED) Ocean.Amber else Ocean.Sky,
+                modifier = Modifier.weight(1f),
+            ) { onOpen("feeding") }
+            Tile(
+                icon = Icons.Rounded.CleaningServices,
+                title = "Maintenance",
+                value = if (dueTasks.isEmpty()) "All good" else "${dueTasks.size} due",
+                caption = dueTasks.firstOrNull()?.name ?: tasks.mapNotNull { t -> t.daysUntilDue()?.let { t to it } }
+                    .minByOrNull { it.second }?.let { (t, d) -> "${t.name} in ${d}d" } ?: "Log tasks in Care",
+                tint = if (dueTasks.isEmpty()) Ocean.Sky else Ocean.Amber,
+                modifier = Modifier.weight(1f),
+            ) { onOpen("care") }
         }
         VSpace(14.dp)
         Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            Tile(Icons.Rounded.Spa, "Tank", "Fish & plants", "Names and counts", Modifier.weight(1f)) { onOpen("tank") }
-            Tile(Icons.Rounded.Science, "Water", "Test log", "pH, ammonia, nitrate", Modifier.weight(1f)) { onOpen("care") }
+            Tile(
+                icon = Icons.Rounded.Spa,
+                title = "In the tank",
+                value = "$fishCount fish",
+                caption = "$plantCount plants",
+                modifier = Modifier.weight(1f),
+            ) { onOpen("tank") }
+            Tile(
+                icon = Icons.Rounded.Science,
+                title = "Water",
+                value = latestTest?.ph?.let { "pH ${formatNumber(it)}" }
+                    ?: latestTest?.let { "Tested" } ?: "Not tested",
+                caption = latestTest?.let { "Tested ${daysAgo(it.at)}" } ?: "Log a test in Care",
+                modifier = Modifier.weight(1f),
+            ) { onOpen("care") }
         }
     }
 }

@@ -11,6 +11,17 @@ import android.os.IBinder
 import android.os.Looper
 import android.util.Log
 import androidx.core.content.ContextCompat
+import com.solarlamp.aquariumlight.data.Access
+import com.solarlamp.aquariumlight.data.Cloud
+import com.solarlamp.aquariumlight.data.MemberStatus
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 import org.eclipse.paho.client.mqttv3.IMqttActionListener
 import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken
 import org.eclipse.paho.client.mqttv3.IMqttToken
@@ -44,6 +55,10 @@ class MonitorService : Service() {
 
     private var client: MqttAsyncClient? = null
 
+    // Shared-data listeners (feeding, join requests) while the service runs.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var cloudJob: Job? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -51,6 +66,7 @@ class MonitorService : Service() {
         alerts = Alerts(this)
         settings = AppSettings(this)
         lastSeen = getSharedPreferences(STATE_PREFS, MODE_PRIVATE)
+        watchCloud()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -70,6 +86,7 @@ class MonitorService : Service() {
     }
 
     override fun onDestroy() {
+        scope.cancel()
         teardown()
         super.onDestroy()
     }
@@ -197,6 +214,43 @@ class MonitorService : Service() {
     }
 
     // -----------------------------------------------------------------
+    // Shared data
+    // -----------------------------------------------------------------
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun watchCloud() {
+        cloudJob?.cancel()
+        cloudJob = scope.launch {
+            Cloud.access.collectLatest { access ->
+                if (access !is Access.Approved) return@collectLatest
+
+                // Someone fed recently: clear this phone's feeding reminder.
+                launch {
+                    Cloud.feedingsFlow(limit = 1).collect { latest ->
+                        val last = latest.firstOrNull() ?: return@collect
+                        val recent = last.at.isAfter(java.time.Instant.now().minusSeconds(Reminders.FED_WINDOW_HOURS * 3600))
+                        if (recent) alerts.cancelFeedingReminder()
+                    }
+                }
+
+                // Admin: new join requests.
+                if (access.member.isAdmin) {
+                    launch {
+                        Cloud.membersFlow().collect { list ->
+                            val notified = lastSeen.getStringSet(KEY_NOTIFIED_REQUESTS, emptySet())!!.toMutableSet()
+                            for (m in list.filter { it.status == MemberStatus.PENDING && it.uid !in notified }) {
+                                alerts.memberRequest(m.displayName, m.email)
+                                notified += m.uid
+                            }
+                            lastSeen.edit().putStringSet(KEY_NOTIFIED_REQUESTS, notified).apply()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------
     // Messages
     // -----------------------------------------------------------------
 
@@ -206,8 +260,10 @@ class MonitorService : Service() {
                 val online = payload.trim() == "1"
                 val previous = remember(KEY_ONLINE, if (online) "1" else "0")
 
-                if (previous != null && settings.notifyOnline) {
-                    alerts.deviceOnline(online)
+                if (previous != null) {
+                    Cloud.logDeviceEvent(if (online) "online" else "offline",
+                        if (online) "Controller came back online" else "Controller went offline")
+                    if (settings.notifyOnline) alerts.deviceOnline(online)
                 }
             }
 
@@ -226,8 +282,11 @@ class MonitorService : Service() {
                     alerts.modeChanged(mode)
                 }
 
-                if (light != null && remember(KEY_LIGHT, light) != null && settings.notifyLight) {
-                    alerts.lightChanged(light == "ON", mode)
+                if (light != null && remember(KEY_LIGHT, light) != null) {
+                    Cloud.logDeviceEvent("light-$light",
+                        "Light turned ${if (light == "ON") "on" else "off"}" +
+                            (mode?.let { " (${Alerts.modeLabel(it)})" } ?: ""))
+                    if (settings.notifyLight) alerts.lightChanged(light == "ON", mode)
                 }
             }
         }
@@ -279,6 +338,7 @@ class MonitorService : Service() {
         private const val KEY_ONLINE = "online"
         private const val KEY_LIGHT = "light"
         private const val KEY_MODE = "mode"
+        private const val KEY_NOTIFIED_REQUESTS = "notified_requests"
 
         /**
          * Starts or stops the service to match the current settings.

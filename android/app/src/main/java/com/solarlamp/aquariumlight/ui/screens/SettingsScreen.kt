@@ -33,6 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -54,7 +55,10 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.solarlamp.aquariumlight.AppSettings
 import com.solarlamp.aquariumlight.MonitorService
+import com.solarlamp.aquariumlight.data.Access
+import com.solarlamp.aquariumlight.data.Cloud
 import com.solarlamp.aquariumlight.data.DeviceRepository
+import com.solarlamp.aquariumlight.data.MemberStatus
 import com.solarlamp.aquariumlight.ui.components.GlassCard
 import com.solarlamp.aquariumlight.ui.components.MutedText
 import com.solarlamp.aquariumlight.ui.components.SectionHeader
@@ -64,7 +68,7 @@ import com.solarlamp.aquariumlight.ui.theme.Ocean
 private enum class Field { NAME, HOST, USERNAME, PASSWORD, PORT }
 
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsScreen(onBack: () -> Unit, onOpenMembers: () -> Unit) {
     val context = LocalContext.current
     val settings = remember { AppSettings(context) }
 
@@ -87,7 +91,14 @@ fun SettingsScreen(onBack: () -> Unit) {
         ActivityResultContracts.RequestPermission(),
     ) { MonitorService.sync(context) }
 
+    val access by Cloud.access.collectAsState()
+    val me = (access as? Access.Approved)?.member
+    val isAdmin = me?.isAdmin == true
+    val members by remember { Cloud.membersFlow() }.collectAsState(initial = emptyList())
+    val pendingCount = members.count { it.status == MemberStatus.PENDING }
+
     fun brokerChanged() {
+        Cloud.publishBroker(context)
         version++
         DeviceRepository.restart()
         MonitorService.sync(context, reconnect = true)
@@ -105,11 +116,30 @@ fun SettingsScreen(onBack: () -> Unit) {
         ScreenTitle("Settings", onBack = onBack)
 
         VSpace(12.dp)
-        SectionHeader("You")
+        SectionHeader("Account")
         GlassCard(Modifier.fillMaxWidth(), padding = PaddingValues(vertical = 6.dp)) {
-            ValueRow("Your name", current.name.ifEmpty { "Not set" }) { editing = Field.NAME }
+            ValueRow("Your name", me?.displayName ?: "—") { editing = Field.NAME }
+            RowDivider()
+            ValueRow("Signed in as", me?.email ?: "—", onClick = null)
+            if (isAdmin) {
+                RowDivider()
+                ValueRow(
+                    "Members",
+                    if (pendingCount > 0) "$pendingCount waiting for approval" else "Approve and manage who has access",
+                    onClick = onOpenMembers,
+                )
+            }
+        }
+        VSpace(12.dp)
+        SignOutButton()
+
+        if (!isAdmin) {
+            VSpace(20.dp)
+            SectionHeader("Connection")
+            MutedText("Connection details are shared by the admin automatically.")
         }
 
+        if (isAdmin) {
         VSpace(20.dp)
         SectionHeader("Broker")
         GlassCard(Modifier.fillMaxWidth(), padding = PaddingValues(vertical = 6.dp)) {
@@ -123,6 +153,7 @@ fun SettingsScreen(onBack: () -> Unit) {
         }
         if (!current.hasCredentials) {
             MutedText("Enter your HiveMQ username and password to connect.", Modifier.padding(top = 10.dp))
+        }
         }
 
         VSpace(20.dp)
@@ -177,8 +208,8 @@ fun SettingsScreen(onBack: () -> Unit) {
 
     when (editing) {
         null -> Unit
-        Field.NAME -> EditDialog("Your name", settings.name, KeyboardOptions(capitalization = KeyboardCapitalization.Words),
-            onDismiss = { editing = null }) { settings.name = it; version++; editing = null }
+        Field.NAME -> EditDialog("Your name", me?.displayName.orEmpty(), KeyboardOptions(capitalization = KeyboardCapitalization.Words),
+            onDismiss = { editing = null }) { Cloud.setMyName(it); editing = null }
         Field.HOST -> EditDialog("Host", settings.host, plainKeyboard(KeyboardType.Uri),
             onDismiss = { editing = null }) { settings.host = it; brokerChanged(); editing = null }
         Field.USERNAME -> EditDialog("Username", settings.username, plainKeyboard(KeyboardType.Ascii),

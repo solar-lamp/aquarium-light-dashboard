@@ -1,0 +1,80 @@
+rules_version = '2';
+
+// Security rules for the Aquarium app's shared data.
+// Paste into Firebase console → Firestore Database → Rules → Publish.
+//
+// - The owner (below) is always approved and always admin.
+// - Anyone else who signs in can only create their own "pending" request
+//   and read their own record, until an admin approves them.
+// - Approved members can read and write the tank data; only admins manage
+//   members, the shared broker login, and delete history.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner() {
+      return signedIn()
+        && request.auth.token.email == 'souradeep241@gmail.com'
+        && request.auth.token.email_verified == true;
+    }
+
+    function myRecord() {
+      return get(/databases/$(database)/documents/members/$(request.auth.uid));
+    }
+
+    function isApproved() {
+      return isOwner() || (signedIn()
+        && exists(/databases/$(database)/documents/members/$(request.auth.uid))
+        && myRecord().data.status == 'approved');
+    }
+
+    function isAdmin() {
+      return isOwner() || (isApproved() && myRecord().data.role == 'admin');
+    }
+
+    match /members/{uid} {
+      allow read: if isApproved() || (signedIn() && request.auth.uid == uid);
+
+      // Your own access request (or the owner's own record).
+      allow create: if signedIn() && request.auth.uid == uid && (
+        isOwner() || (
+          request.resource.data.status == 'pending'
+          && request.resource.data.role == 'member'
+          && request.resource.data.email == request.auth.token.email
+        )
+      );
+
+      // Admins change anything; members may only touch their own name / last-seen.
+      allow update: if isAdmin() || (
+        signedIn() && request.auth.uid == uid
+        && request.resource.data.status == resource.data.status
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.email == resource.data.email
+      );
+
+      allow delete: if isAdmin();
+    }
+
+    // Shared MQTT login: members read it, only admins write it.
+    match /config/{doc} {
+      allow read: if isApproved();
+      allow write: if isAdmin();
+    }
+
+    // History: everyone adds, nobody edits (except repeated device events), admins delete.
+    match /tanks/{tank}/history/{entry} {
+      allow read, create: if isApproved();
+      allow update: if isApproved() && entry.matches('device-.*');
+      allow delete: if isAdmin();
+    }
+
+    // Feeding, maintenance, water tests, fish & plants, settings.
+    match /tanks/{tank}/{collection}/{doc} {
+      allow read, write: if isApproved() && collection != 'history';
+    }
+  }
+}

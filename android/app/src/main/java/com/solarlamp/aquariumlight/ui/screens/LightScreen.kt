@@ -47,7 +47,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.solarlamp.aquariumlight.data.Cloud
 import com.solarlamp.aquariumlight.data.DeviceRepository
+import com.solarlamp.aquariumlight.data.HistoryType
 import com.solarlamp.aquariumlight.data.DeviceStatus
 import com.solarlamp.aquariumlight.data.Mode
 import com.solarlamp.aquariumlight.data.Slot
@@ -65,7 +67,7 @@ import kotlinx.coroutines.launch
 private data class Feedback(val text: String, val isError: Boolean = false)
 
 @Composable
-fun LightScreen() {
+fun LightScreen(isAdmin: Boolean) {
     val state by DeviceRepository.state.collectAsState()
     val now by rememberNow()
     val status = state.status
@@ -88,8 +90,12 @@ fun LightScreen() {
         }
         modeFeedback = Feedback("Sending…")
         scope.launch {
-            modeFeedback = if (DeviceRepository.confirm { it.mode == mode }) Feedback("✓ ${mode.label}")
-            else Feedback("The device didn't confirm. It may be offline.", true)
+            if (DeviceRepository.confirm { it.mode == mode }) {
+                modeFeedback = Feedback("✓ ${mode.label}")
+                Cloud.log(HistoryType.LIGHT, "Set the light to ${mode.label}")
+            } else {
+                modeFeedback = Feedback("The device didn't confirm. It may be offline.", true)
+            }
         }
     }
 
@@ -112,6 +118,9 @@ fun LightScreen() {
             if (ok) {
                 draft = null
                 saveFeedback = Feedback("✓ Saved on the device")
+                Cloud.log(HistoryType.LIGHT, "Changed the light schedule: " + toSave.mapIndexed { i, sl ->
+                    "slot ${i + 1} " + if (sl.enabled) "${sl.on}–${sl.off}" else "off"
+                }.joinToString(", "))
             } else {
                 saveFeedback = Feedback("The device didn't confirm. It may be offline.", true)
             }
@@ -185,6 +194,7 @@ fun LightScreen() {
                 SlotCard(
                     index = index,
                     slot = slot,
+                    editable = isAdmin,
                     onToggle = { enabled -> draft = slots.toMutableList().also { it[index] = slot.copy(enabled = enabled) } },
                     onPickOn = { picking = index to true },
                     onPickOff = { picking = index to false },
@@ -192,7 +202,9 @@ fun LightScreen() {
                 VSpace(14.dp)
             }
 
-            PillButton(
+            if (!isAdmin) {
+                MutedText("Only the admin can change the schedule.")
+            } else PillButton(
                 text = if (saving) "Saving…" else "Save schedule",
                 onClick = { save(slots) },
                 style = PillStyle.PRIMARY,
@@ -208,6 +220,7 @@ fun LightScreen() {
             FeedbackText(saveFeedback)
         }
 
+        if (isAdmin) {
         VSpace(24.dp)
         SectionHeader("Controller")
 
@@ -224,6 +237,7 @@ fun LightScreen() {
                 icon = Icons.Rounded.Wifi,
                 enabled = online,
             )
+        }
         }
     }
 
@@ -261,7 +275,9 @@ fun LightScreen() {
             confirmButton = {
                 TextButton(onClick = {
                     confirmReset = false
-                    DeviceRepository.resetWifi()
+                    if (DeviceRepository.resetWifi()) {
+                        Cloud.log(HistoryType.LIGHT, "Restarted the controller into WiFi setup")
+                    }
                 }) { Text("Reconfigure", color = Ocean.Coral) }
             },
             dismissButton = { TextButton(onClick = { confirmReset = false }) { Text("Cancel") } },
@@ -290,6 +306,7 @@ private fun FeedbackText(feedback: Feedback?) {
 private fun SlotCard(
     index: Int,
     slot: Slot,
+    editable: Boolean,
     onToggle: (Boolean) -> Unit,
     onPickOn: () -> Unit,
     onPickOff: () -> Unit,
@@ -303,6 +320,7 @@ private fun SlotCard(
             Switch(
                 checked = slot.enabled,
                 onCheckedChange = onToggle,
+                enabled = editable,
                 colors = SwitchDefaults.colors(
                     checkedTrackColor = Ocean.Blue,
                     checkedThumbColor = Color.White,
@@ -312,21 +330,21 @@ private fun SlotCard(
         }
         VSpace(14.dp)
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            TimeBox("On", slot.on, slot.enabled, onPickOn, Modifier.weight(1f))
-            TimeBox("Off", slot.off, slot.enabled, onPickOff, Modifier.weight(1f))
+            TimeBox("On", slot.on, slot.enabled, editable, onPickOn, Modifier.weight(1f))
+            TimeBox("Off", slot.off, slot.enabled, editable, onPickOff, Modifier.weight(1f))
         }
     }
 }
 
 @Composable
-private fun TimeBox(label: String, time: TimeOfDay, enabled: Boolean, onClick: () -> Unit, modifier: Modifier) {
+private fun TimeBox(label: String, time: TimeOfDay, enabled: Boolean, editable: Boolean, onClick: () -> Unit, modifier: Modifier) {
     val shape = RoundedCornerShape(18.dp)
     Column(
         modifier
             .clip(shape)
             .background(Ocean.Abyss.copy(alpha = if (enabled) 0.45f else 0.25f))
             .border(1.dp, Ocean.GlassEdgeFaint, shape)
-            .clickable(enabled = enabled, onClick = onClick)
+            .clickable(enabled = enabled && editable, onClick = onClick)
             .padding(14.dp),
     ) {
         Text(label, style = MaterialTheme.typography.labelMedium, color = Ocean.TextMuted)
@@ -373,25 +391,4 @@ private fun DayTimeline(slots: List<Slot>, now: TimeOfDay?) {
             }
         }
     }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun TimePickDialog(
-    title: String,
-    initial: TimeOfDay,
-    onDismiss: () -> Unit,
-    onPick: (TimeOfDay) -> Unit,
-) {
-    val pickerState = rememberTimePickerState(initial.hour, initial.minute, is24Hour = true)
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = Ocean.Deep,
-        title = { Text(title) },
-        text = { TimePicker(state = pickerState) },
-        confirmButton = {
-            TextButton(onClick = { onPick(TimeOfDay.of(pickerState.hour, pickerState.minute)) }) { Text("Set") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-    )
 }
