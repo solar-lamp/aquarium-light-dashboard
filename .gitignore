@@ -1,0 +1,12 @@
+# Firmware credentials (see firmware/Aquarium_Light/secrets.example.h)
+firmware/**/secrets.h
+
+# Arduino / PlatformIO build output
+build/
+.pio/
+
+# Editor / OS clutter
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
