@@ -44,6 +44,7 @@
     <string name="monitor_connecting">Connecting to broker…</string>
     <string name="monitor_reconnecting">Connection lost, reconnecting…</string>
     <string name="monitor_failed">Can\'t reach broker, retrying: %1$s</string>
+    <string name="monitor_auth_failed">Broker rejected the username or password. Check them in Settings (they\'re case-sensitive).</string>
     <string name="monitor_no_credentials">Add broker details in Settings</string>
     <string name="alert_offline_title">Aquarium light is offline</string>
     <string name="alert_offline_text">The controller dropped off the internet. It keeps following its schedule on its own clock.</string>

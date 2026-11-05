@@ -17,6 +17,7 @@ import org.eclipse.paho.client.mqttv3.IMqttToken
 import org.eclipse.paho.client.mqttv3.MqttAsyncClient
 import org.eclipse.paho.client.mqttv3.MqttCallbackExtended
 import org.eclipse.paho.client.mqttv3.MqttConnectOptions
+import org.eclipse.paho.client.mqttv3.MqttException
 import org.eclipse.paho.client.mqttv3.MqttMessage
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence
 import org.json.JSONException
@@ -139,14 +140,28 @@ class MonitorService : Service() {
                     // Automatic reconnect only covers drops after a successful
                     // connect, so retry the first connection ourselves.
                     Log.w(TAG, "Connect failed", e)
-                    alerts.updateMonitor(getString(R.string.monitor_failed, e?.message ?: "unknown error"))
-                    handler.postDelayed(retryConnect, RETRY_DELAY_MS)
+
+                    if (isAuthFailure(e)) {
+                        // Retrying fast won't help until the details change in
+                        // Settings, which restarts the connection anyway.
+                        alerts.updateMonitor(getString(R.string.monitor_auth_failed))
+                        handler.postDelayed(retryConnect, AUTH_RETRY_DELAY_MS)
+                    } else {
+                        alerts.updateMonitor(getString(R.string.monitor_failed, e?.message ?: "unknown error"))
+                        handler.postDelayed(retryConnect, RETRY_DELAY_MS)
+                    }
                 }
             })
         } catch (e: Exception) {
             Log.e(TAG, "Connect threw", e)
             handler.postDelayed(retryConnect, RETRY_DELAY_MS)
         }
+    }
+
+    private fun isAuthFailure(e: Throwable?): Boolean {
+        val code = (e as? MqttException)?.reasonCode ?: return false
+        return code == MqttException.REASON_CODE_FAILED_AUTHENTICATION.toInt() ||
+            code == MqttException.REASON_CODE_NOT_AUTHORIZED.toInt()
     }
 
     private fun teardown() {
@@ -257,6 +272,7 @@ class MonitorService : Service() {
 
         private const val ACTION_RECONNECT = "com.solarlamp.aquariumlight.RECONNECT"
         private const val RETRY_DELAY_MS = 30_000L
+        private const val AUTH_RETRY_DELAY_MS = 5 * 60_000L
 
         private const val STATE_PREFS = "monitor_state"
         private const val KEY_CLIENT_ID = "client_id"
