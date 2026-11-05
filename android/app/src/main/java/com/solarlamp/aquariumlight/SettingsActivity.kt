@@ -70,6 +70,13 @@ class SettingsFragment : PreferenceFragmentCompat(),
             }
         }
 
+        // Usernames are case-sensitive: stop the keyboard capitalising or "correcting" them.
+        findPreference<EditTextPreference>(AppSettings.KEY_USERNAME)?.setOnBindEditTextListener {
+            it.inputType = InputType.TYPE_CLASS_TEXT or
+                InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD or
+                InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+        }
+
         findPreference<EditTextPreference>(AppSettings.KEY_HOST)?.setOnBindEditTextListener {
             it.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
         }
