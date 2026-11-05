@@ -23,6 +23,7 @@ the mode and edit the schedule.
 | `config.js` | Broker connection settings for the dashboard |
 | `firmware/Aquarium_Light/` | Arduino sketch for the ESP8266 |
 | `firmware/Aquarium_Light/secrets.example.h` | Template for the firmware's broker credentials |
+| `android/` | Android app (wraps the same dashboard, adds background alerts) |
 
 ## Dashboard
 
@@ -31,6 +32,62 @@ Pages works). The broker settings are in `config.js`.
 
 Everything in `config.js` is public to anyone who can load the page. Use a
 broker user whose permissions only cover `aquarium/#`, not an admin account.
+
+## Android app
+
+A native Android app that shows the same dashboard and can notify you when
+something changes, from any network. It isn't on the Play Store: you install
+the APK directly.
+
+**Get the APK:** every push to `main` that touches the app or the dashboard
+builds it with GitHub Actions and publishes it as the
+[`app-latest` release](../../releases/tag/app-latest). On your phone, download
+`aquarium-light.apk`, open it and allow installing from your browser when asked.
+Builds from other branches are attached to their Actions run as an artifact.
+
+**First launch:** Settings opens. Enter the broker username and password (the
+host and ports are prefilled). These are stored only on the phone, not in the APK.
+
+**Notifications** (Settings → Notifications):
+
+- *Background alerts* keeps a connection to the broker open while the app is
+  closed. Android requires a small permanent notification for that.
+- Choose which alerts you want: device offline / back online, light on / off,
+  mode changes.
+- *Run in background reliably* lets the app skip Android's battery
+  optimisation. Without it, alerts can be delayed for a long time while the
+  phone is idle.
+- *Sound and style* opens Android's settings for each alert type.
+
+Changes that happen while your phone has no connection are reported when it
+reconnects.
+
+**How it's built:** the APK bundles `index.html`, `style.css`, `script.js` and
+`aquarium.jpg` from the repo root at build time, so the website and the app
+always show the same dashboard. The app replaces `config.js` with one built from
+your Settings. To build locally, open `android/` in Android Studio, or run
+`./gradlew assembleRelease` in `android/`.
+
+**Signing key (do this once):** without one, every CI build gets a new
+throwaway key, and Android refuses to install an update over an app signed with
+a different key. Create a key and add it as repository secrets
+(*Settings → Secrets and variables → Actions*):
+
+```sh
+keytool -genkeypair -v -keystore release.jks -alias aquarium \
+  -keyalg RSA -keysize 2048 -validity 10000
+base64 -w0 release.jks   # paste the output into SIGNING_KEYSTORE_BASE64
+```
+
+| Secret | Value |
+| --- | --- |
+| `SIGNING_KEYSTORE_BASE64` | base64 of `release.jks` |
+| `SIGNING_STORE_PASSWORD` | the keystore password |
+| `SIGNING_KEY_ALIAS` | `aquarium` |
+| `SIGNING_KEY_PASSWORD` | the key password |
+
+Keep `release.jks` and its passwords somewhere safe. If you lose them, you'll
+have to uninstall the app before you can install a newer build.
 
 ## Firmware
 
