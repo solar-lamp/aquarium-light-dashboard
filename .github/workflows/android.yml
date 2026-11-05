@@ -59,6 +59,16 @@ jobs:
           ./gradlew assembleRelease --no-daemon --stacktrace
           cp app/build/outputs/apk/release/app-release.apk "$RUNNER_TEMP/aquarium-light.apk"
 
+      - name: Check the dashboard is bundled
+        run: |
+          unzip -l "$RUNNER_TEMP/aquarium-light.apk" | tee "$RUNNER_TEMP/apk-contents.txt" | grep "assets/web/" || true
+          for f in index.html style.css script.js aquarium.jpg; do
+            grep -q "assets/web/$f" "$RUNNER_TEMP/apk-contents.txt" || { echo "::error::assets/web/$f missing from APK"; exit 1; }
+          done
+          if grep -q "assets/web/config.js" "$RUNNER_TEMP/apk-contents.txt"; then
+            echo "::error::config.js must not be bundled (it holds website credentials)"; exit 1
+          fi
+
       - uses: actions/upload-artifact@v4
         with:
           name: aquarium-light-apk
