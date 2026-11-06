@@ -12,10 +12,16 @@
  *                         SYNC_TIME                            re-sync the clock from the internet
  *                         SET_TIME:YYYY-MM-DDTHH:MM:SS         set the clock (local time)
  *                         UPDATE_FIRMWARE                      install the latest release over the air
+ *                         RESTART                              restart (also leaves safe mode)
  *                         RESET_WIFI                           forget WiFi, reopen the setup hotspot
  *   aquarium/schedule  <- "e1,HH:MM,HH:MM,e2,HH:MM,HH:MM"  (e = 1 enabled / 0 disabled)
  *   aquarium/status    -> JSON status, retained, every STATUS_INTERVAL_MS and on change
  *   aquarium/online    -> "1" / "0", retained; "0" is the broker-side last will
+ *
+ * Crash guard: after CRASH_LIMIT crash restarts in a row the board starts in
+ * safe mode, which only connects, reports {"safeMode":true}, and accepts
+ * FORCE_ON / FORCE_OFF / AUTO (relay off) / STATUS / UPDATE_FIRMWARE / RESTART,
+ * so a bad update can always be fixed over the air.
  *
  * Broker login: entered on the setup hotspot (AquariumLight_Setup) and kept
  * in flash, so over-the-air updates never need it. secrets.h can pre-fill it
@@ -60,6 +66,12 @@ const unsigned long STATUS_INTERVAL_MS     = 10000;
 const unsigned long MQTT_RETRY_INTERVAL_MS = 5000;
 const unsigned long WIFI_RETRY_INTERVAL_MS = 30000;
 const unsigned long ONTIME_SAVE_MS         = 300000;   // persist on-time every 5 min
+
+// Crash guard
+const uint32_t      CRASH_LIMIT          = 3;        // crash restarts in a row before safe mode
+const unsigned long CRASH_STABLE_MS      = 60000;    // running this long clears the count
+const uint32_t      GUARD_MAGIC          = 0xA9A0C0DE;
+const uint32_t      GUARD_RTC_OFFSET     = 64;       // RTC user memory block; first 128 bytes belong to OTA
 
 const char* const TOPIC_CONTROL  = "aquarium/control";
 const char* const TOPIC_SCHEDULE = "aquarium/schedule";
@@ -131,6 +143,17 @@ unsigned long onMsToday   = 0;
 unsigned long lastTickMs  = 0;
 unsigned long lastOnSave  = 0;
 bool          onTimeDirty = false;
+
+// Crash guard (stored in RTC user memory: survives restarts, not power loss)
+struct CrashGuard
+{
+    uint32_t magic;
+    uint32_t crashes;
+};
+
+bool     safeMode      = false;
+uint32_t crashCount    = 0;
+bool     guardCleared  = false;
 
 unsigned long lastControlRun    = 0;
 unsigned long lastStatusPublish = 0;
@@ -255,6 +278,40 @@ void syncRtcFromSystemTime()
 void startNtp()
 {
     configTime(UTC_OFFSET_SECONDS, 0, "pool.ntp.org", "time.nist.gov", "time.google.com");
+}
+
+// Defined further down; declared here for the safe-mode code.
+void maintainMqtt();
+void runFirmwareUpdate();
+void onMqttMessage(char* topic, byte* payload, unsigned int length);
+
+// =========================================================
+// CRASH GUARD
+// =========================================================
+
+void writeCrashCount(uint32_t count)
+{
+    CrashGuard guard = { GUARD_MAGIC, count };
+    ESP.rtcUserMemoryWrite(GUARD_RTC_OFFSET, (uint32_t*)&guard, sizeof(guard));
+}
+
+// Called first thing at boot. Returns true if the board should start in safe mode.
+bool checkCrashGuard()
+{
+    CrashGuard guard;
+    ESP.rtcUserMemoryRead(GUARD_RTC_OFFSET, (uint32_t*)&guard, sizeof(guard));
+    uint32_t previous = guard.magic == GUARD_MAGIC ? guard.crashes : 0;
+
+    uint32_t reason = ESP.getResetInfoPtr()->reason;
+    bool crashed = reason == REASON_WDT_RST ||
+                   reason == REASON_EXCEPTION_RST ||
+                   reason == REASON_SOFT_WDT_RST;
+
+    crashCount = crashed ? previous + 1 : 0;
+    writeCrashCount(crashCount);
+
+    Serial.printf("Reset reason %u, crash restarts in a row: %u\n", reason, crashCount);
+    return crashCount >= CRASH_LIMIT;
 }
 
 // =========================================================
@@ -579,6 +636,20 @@ void handleControl(const char* message)
         return;
     }
 
+    if(strcmp(message, "RESTART") == 0)
+    {
+        Serial.println(F("Restart requested"));
+        if(mqtt.connected())
+        {
+            mqtt.publish(TOPIC_ONLINE, "0", true);
+            mqtt.disconnect();
+        }
+        saveOnTime();
+        writeCrashCount(0);
+        delay(300);
+        ESP.restart();
+    }
+
     if(strcmp(message, "SYNC_TIME") == 0)
     {
         Serial.println(F("Clock re-sync requested"));
@@ -641,6 +712,110 @@ void handleSchedule(const char* message)
     runControl();
 }
 
+// =========================================================
+// SAFE MODE
+// =========================================================
+
+void publishSafeStatus()
+{
+    String update = updateMessage;
+    update.replace("\"", "'");
+
+    char payload[384];
+    snprintf(payload, sizeof(payload),
+        "{\"online\":true,"
+        "\"safeMode\":true,"
+        "\"crashes\":%u,"
+        "\"mode\":\"%s\","
+        "\"light\":\"%s\","
+        "\"uptime\":%lu,"
+        "\"reset\":\"%s\","
+        "\"fw\":\"%s\","
+        "\"update\":\"%s\"}",
+        crashCount,
+        lightOn ? "FORCE_ON" : "FORCE_OFF",
+        lightOn ? "ON" : "OFF",
+        millis() / 1000UL,
+        ESP.getResetReason().c_str(),
+        FW_VERSION,
+        update.c_str());
+
+    mqtt.publish(TOPIC_STATUS, payload, true);
+}
+
+void handleSafeControl(const char* message)
+{
+    if(strcmp(message, "FORCE_ON") == 0)
+    {
+        lightOn = true;
+    }
+    else if(strcmp(message, "FORCE_OFF") == 0 || strcmp(message, "AUTO") == 0)
+    {
+        lightOn = false;   // no schedule in safe mode
+    }
+    else if(strcmp(message, "UPDATE_FIRMWARE") == 0)
+    {
+        firmwareUpdateRequested = true;
+    }
+    else if(strcmp(message, "RESTART") == 0)
+    {
+        Serial.println(F("Leaving safe mode"));
+        mqtt.publish(TOPIC_ONLINE, "0", true);
+        mqtt.disconnect();
+        writeCrashCount(0);
+        delay(300);
+        ESP.restart();
+    }
+    else if(strcmp(message, "STATUS") != 0)
+    {
+        return;
+    }
+
+    digitalWrite(RELAY_PIN, lightOn ? HIGH : LOW);
+    statusDirty = true;
+}
+
+void setupSafeMode()
+{
+    Serial.println(F("SAFE MODE: repeated crashes, starting minimal firmware"));
+
+    fsAvailable = LittleFS.begin();
+    loadMqttConfig();
+
+    WiFi.mode(WIFI_STA);
+    WiFi.begin();   // saved network
+
+    tlsClient.setInsecure();
+    mqtt.setServer(mqttHost, mqttPort);
+    mqtt.setCallback(onMqttMessage);
+    mqtt.setBufferSize(1024);
+}
+
+void loopSafeMode()
+{
+    unsigned long now = millis();
+
+    if(WiFi.status() != WL_CONNECTED && now - lastWifiAttempt >= WIFI_RETRY_INTERVAL_MS)
+    {
+        lastWifiAttempt = now;
+        WiFi.begin();
+    }
+
+    maintainMqtt();
+
+    if(mqtt.connected() && (statusDirty || now - lastStatusPublish >= STATUS_INTERVAL_MS))
+    {
+        publishSafeStatus();
+        lastStatusPublish = now;
+        statusDirty = false;
+    }
+
+    if(firmwareUpdateRequested)
+    {
+        runFirmwareUpdate();
+    }
+}
+
 void onMqttMessage(char* topic, byte* payload, unsigned int length)
 {
     char message[128];
@@ -658,9 +833,10 @@ void onMqttMessage(char* topic, byte* payload, unsigned int length)
 
     if(strcmp(topic, TOPIC_CONTROL) == 0)
     {
-        handleControl(message);
+        if(safeMode) handleSafeControl(message);
+        else handleControl(message);
     }
-    else if(strcmp(topic, TOPIC_SCHEDULE) == 0)
+    else if(strcmp(topic, TOPIC_SCHEDULE) == 0 && !safeMode)
     {
         handleSchedule(message);
     }
@@ -796,7 +972,7 @@ void runFirmwareUpdate()
     if(mqtt.connected())
     {
         updateMessage = "Updating";
-        publishStatus();
+        if(safeMode) publishSafeStatus(); else publishStatus();
         mqtt.loop();
         mqtt.disconnect();
     }
@@ -885,6 +1061,13 @@ void setup()
     pinMode(RELAY_PIN, OUTPUT);
     digitalWrite(RELAY_PIN, LOW);
 
+    if(checkCrashGuard())
+    {
+        safeMode = true;
+        setupSafeMode();
+        return;
+    }
+
     // RTC: optional. Without it we fall back to NTP time.
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
     rtcAvailable = rtc.begin();
@@ -970,6 +1153,20 @@ void setup()
 
 void loop()
 {
+    if(safeMode)
+    {
+        loopSafeMode();
+        return;
+    }
+
+    // Survived long enough: this firmware is stable, clear the crash count.
+    if(!guardCleared && crashCount > 0 && millis() > CRASH_STABLE_MS)
+    {
+        guardCleared = true;
+        crashCount = 0;
+        writeCrashCount(0);
+    }
+
     maintainWifi();
     maintainMqtt();
 

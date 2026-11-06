@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CloudSync
 import androidx.compose.material.icons.rounded.PhoneAndroid
+import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -131,6 +132,11 @@ fun ClockCard(state: DeviceState, online: Boolean, isAdmin: Boolean) {
     var feedback by remember { mutableStateOf<String?>(null) }
 
     GlassCard(Modifier.fillMaxWidth()) {
+        if (status?.safeMode == true) {
+            MutedText("Clock details are paused while the controller is in safe mode.")
+            return@GlassCard
+        }
+
         if (status?.timeSource == null) {
             Text(status?.clock?.let { "Device time $it" } ?: "—", style = MaterialTheme.typography.titleLarge, color = Ocean.Text)
             VSpace(6.dp)
@@ -176,7 +182,9 @@ fun ClockCard(state: DeviceState, online: Boolean, isAdmin: Boolean) {
         VSpace(14.dp)
         InfoRow("Coin cell", when {
             status.rtcFound == false -> "RTC not detected; using internet time only"
-            status.rtcLostPower == true -> "Likely flat or missing: the RTC had lost its time at the last power-up. Replace the CR2032 cell."
+            status.rtcLostPower == true -> "The RTC had lost its time when the controller last started. " +
+                "Expected right after a battery change; to re-test, unplug the controller for a minute and plug it back in. " +
+                "If this shows again, the cell is flat or not making contact."
             else -> "OK"
         }, warn = status.rtcFound == false || status.rtcLostPower == true)
         InfoRow("Last internet sync", when (val ago = status.ntpAgoSeconds) {
@@ -275,6 +283,69 @@ fun FirmwareCard(status: DeviceStatus?, online: Boolean) {
                 modifier = Modifier.fillMaxWidth(),
             )
             latest != null -> MutedText("Up to date.")
+        }
+    }
+}
+
+// =========================================================
+// Safe mode (crash guard)
+// =========================================================
+
+@Composable
+fun SafeModeBanner(status: DeviceStatus, isAdmin: Boolean, online: Boolean) {
+    if (!status.safeMode) return
+    var feedback by remember { mutableStateOf<String?>(null) }
+
+    GlassCard(Modifier.fillMaxWidth(), glow = Ocean.Coral) {
+        Text("Controller in safe mode", style = MaterialTheme.typography.titleLarge, color = Ocean.Coral)
+        VSpace(6.dp)
+        MutedText(
+            "It crashed ${status.crashes ?: "several"} times in a row (last restart: ${status.resetReason ?: "unknown"}), " +
+                "so it started a minimal version of itself. The schedule is paused; On and Off still work. " +
+                if (isAdmin) "Restart it to try the normal firmware again, or install a fixed firmware below."
+                else "The admin has been notified.",
+        )
+        if (isAdmin) {
+            VSpace(14.dp)
+            PillButton(
+                "Restart normally",
+                {
+                    feedback = if (DeviceRepository.restartController()) {
+                        Cloud.log(HistoryType.LIGHT, "Restarted the controller out of safe mode")
+                        "Restarting… If it crashes again it returns to safe mode."
+                    } else "Not connected."
+                },
+                style = PillStyle.PRIMARY,
+                icon = Icons.Rounded.RestartAlt,
+                enabled = online,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            feedback?.let { MutedText(it, Modifier.padding(top = 10.dp)) }
+        }
+    }
+}
+
+@Composable
+fun RestartControllerButton(online: Boolean) {
+    var confirming by remember { mutableStateOf(false) }
+    PillButton(
+        "Restart controller",
+        { confirming = true },
+        icon = Icons.Rounded.RestartAlt,
+        enabled = online,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    if (confirming) {
+        ConfirmDialog(
+            title = "Restart the controller?",
+            text = "It's back online in about 20 seconds. The light keeps its schedule and mode.",
+            confirmText = "Restart",
+            onDismiss = { confirming = false },
+        ) {
+            confirming = false
+            if (DeviceRepository.restartController()) {
+                Cloud.log(HistoryType.LIGHT, "Restarted the controller")
+            }
         }
     }
 }

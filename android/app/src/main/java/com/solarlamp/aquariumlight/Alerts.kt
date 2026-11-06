@@ -77,6 +77,16 @@ class Alerts(private val context: Context) {
             .build())
     }
 
+    fun safeMode(crashes: Int?) {
+        val text = "The controller crashed ${crashes ?: "several"} times in a row and started in safe mode. " +
+            "The schedule is paused. Open AquaHome to restart it or install a fixed firmware."
+        post(ID_SAFE_MODE, alert(CHANNEL_ONLINE)
+            .setContentTitle("Controller in safe mode")
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .build())
+    }
+
     /** Someone fed the fish: clear the reminder on this phone too. */
     fun cancelFeedingReminder() = manager.cancel(ID_FEEDING)
 
@@ -145,6 +155,7 @@ class Alerts(private val context: Context) {
         private const val ID_MODE = 12
         private const val ID_FEEDING = 13
         private const val ID_CARE = 14
+        private const val ID_SAFE_MODE = 15
         private const val ID_MEMBERS = 5000
 
         private const val CHANNEL_MONITOR = "monitor"

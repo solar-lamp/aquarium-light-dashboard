@@ -67,6 +67,9 @@ data class DeviceStatus(
     val resetReason: String? = null,
     val firmware: String? = null,
     val updateMessage: String? = null,
+    /** Crash guard: the controller restarted into minimal safe mode. */
+    val safeMode: Boolean = false,
+    val crashes: Int? = null,
 ) {
     val time: TimeOfDay? get() = TimeOfDay.parse(clock)
 
@@ -115,6 +118,8 @@ data class DeviceStatus(
                 resetReason = o.optString("reset").takeIf { it.isNotEmpty() },
                 firmware = o.optString("fw").takeIf { it.isNotEmpty() },
                 updateMessage = o.optString("update").takeIf { it.isNotEmpty() },
+                safeMode = o.optBoolean("safeMode", false),
+                crashes = if (o.has("crashes")) o.optInt("crashes") else null,
             )
         } catch (e: JSONException) {
             null

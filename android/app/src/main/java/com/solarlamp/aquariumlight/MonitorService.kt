@@ -275,6 +275,12 @@ class MonitorService : Service() {
                     return
                 }
 
+                val safe = status.optBoolean("safeMode", false)
+                if (remember(KEY_SAFE, if (safe) "1" else "0") != null && safe) {
+                    Cloud.logDeviceEvent("safe-mode", "Controller started in safe mode after repeated crashes")
+                    alerts.safeMode(if (status.has("crashes")) status.optInt("crashes") else null)
+                }
+
                 val light = status.optString("light").takeIf { it == "ON" || it == "OFF" }
                 val mode = status.optString("mode").takeIf { it.isNotEmpty() }
 
@@ -339,6 +345,7 @@ class MonitorService : Service() {
         private const val KEY_LIGHT = "light"
         private const val KEY_MODE = "mode"
         private const val KEY_NOTIFIED_REQUESTS = "notified_requests"
+        private const val KEY_SAFE = "safe_mode"
 
         /**
          * Starts or stops the service to match the current settings.

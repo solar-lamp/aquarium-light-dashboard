@@ -153,7 +153,10 @@ fun LightScreen(isAdmin: Boolean) {
             }
         }
 
-        if (status != null) {
+        if (status?.safeMode == true) {
+            VSpace(14.dp)
+            SafeModeBanner(status, isAdmin, online)
+        } else if (status != null) {
             VSpace(24.dp)
             SectionHeader("Light time")
             LightTimeCard(status)
@@ -235,6 +238,8 @@ fun LightScreen(isAdmin: Boolean) {
         SectionHeader("Controller")
 
         FirmwareCard(status, online)
+        VSpace(14.dp)
+        RestartControllerButton(online)
         VSpace(14.dp)
 
         GlassCard(Modifier.fillMaxWidth()) {
