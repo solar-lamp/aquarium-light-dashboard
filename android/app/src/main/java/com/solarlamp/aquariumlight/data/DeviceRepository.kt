@@ -1,6 +1,8 @@
 package com.solarlamp.aquariumlight.data
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -30,10 +32,20 @@ data class DeviceState(
     val onlineFlag: Boolean? = null,
     val status: DeviceStatus? = null,
     val statusAt: Long = 0L,
+    /** When the phone's broker connection last dropped (0 = it hasn't since it last connected). */
+    val linkLostAt: Long = 0L,
+    val everConnected: Boolean = false,
 ) {
+    /**
+     * Connected, or only just dropped: brief network blips (WiFi to mobile
+     * data, a router hiccup) don't flip the whole screen to "Connecting".
+     */
+    fun linkOk(now: Long): Boolean =
+        link == Link.CONNECTED || (everConnected && linkLostAt > 0 && now - linkLostAt < LINK_GRACE_MS)
+
     /** The device reports every 10 s; three missed reports means it's gone. */
     fun deviceOnline(now: Long): Boolean =
-        link == Link.CONNECTED && onlineFlag != false && status != null && now - statusAt < STALE_MS
+        linkOk(now) && onlineFlag != false && status != null && now - statusAt < STALE_MS
 
     /** Known to be offline (not merely still connecting or waiting). */
     fun deviceOffline(now: Long): Boolean =
@@ -44,6 +56,7 @@ data class DeviceState(
 
     companion object {
         const val STALE_MS = 30_000L
+        const val LINK_GRACE_MS = 8_000L
     }
 }
 
@@ -58,7 +71,7 @@ object DeviceRepository {
     private const val TOPIC_ONLINE = "aquarium/online"
     private const val TOPIC_CONTROL = "aquarium/control"
     private const val TOPIC_SCHEDULE = "aquarium/schedule"
-    private const val RETRY_MS = 10_000L
+    private const val RETRY_MS = 4_000L
     private const val CONFIRM_TIMEOUT_MS = 15_000L
     private const val KEY_LAST_STATUS = "last_status"
 
@@ -72,6 +85,10 @@ object DeviceRepository {
     private var client: MqttAsyncClient? = null
     private var started = false
 
+    // Reconnect the moment the phone's network comes back, instead of
+    // waiting for the next scheduled retry.
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+
     fun start(context: Context) {
         appContext = context.applicationContext
         started = true
@@ -82,13 +99,38 @@ object DeviceRepository {
                 _state.update { it.copy(status = cached, statusAt = 0L) }
             }
         }
+        watchNetwork()
         connect()
     }
 
     fun stop() {
         started = false
+        unwatchNetwork()
         teardown()
-        _state.update { it.copy(link = Link.IDLE) }
+        _state.update { it.copy(link = Link.IDLE, linkLostAt = 0L) }
+    }
+
+    private fun watchNetwork() {
+        if (networkCallback != null) return
+        val cm = appContext.getSystemService(ConnectivityManager::class.java) ?: return
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                handler.post {
+                    if (started && client?.isConnected != true) {
+                        Log.i(TAG, "Network available, reconnecting now")
+                        teardown()
+                        connect()
+                    }
+                }
+            }
+        }
+        runCatching { cm.registerDefaultNetworkCallback(callback) }.onSuccess { networkCallback = callback }
+    }
+
+    private fun unwatchNetwork() {
+        val callback = networkCallback ?: return
+        networkCallback = null
+        runCatching { appContext.getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(callback) }
     }
 
     /** Call after broker details change. */
@@ -167,17 +209,27 @@ object DeviceRepository {
                 } catch (e: Exception) {
                     Log.e(TAG, "Subscribe failed", e)
                 }
-                _state.update { it.copy(link = Link.CONNECTED, linkError = null) }
+                _state.update { it.copy(link = Link.CONNECTED, linkError = null, linkLostAt = 0L, everConnected = true) }
                 // Don't wait up to 10 s for the next scheduled report.
                 requestStatus()
             }
 
             override fun connectionLost(cause: Throwable?) {
-                _state.update { it.copy(link = Link.CONNECTING, linkError = "Reconnecting…") }
+                Log.w(TAG, "Connection lost", cause)
+                _state.update { it.copy(link = Link.CONNECTING, linkError = "Reconnecting…", linkLostAt = System.currentTimeMillis()) }
             }
 
             override fun messageArrived(topic: String, message: MqttMessage) {
-                val text = String(message.payload, Charsets.UTF_8)
+                // An exception thrown here would make the MQTT library drop the
+                // connection, so never let one escape.
+                try {
+                    handleMessage(topic, String(message.payload, Charsets.UTF_8))
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to handle message on $topic", e)
+                }
+            }
+
+            private fun handleMessage(topic: String, text: String) {
                 when (topic) {
                     TOPIC_ONLINE -> _state.update { it.copy(onlineFlag = text.trim() == "1") }
                     ControllerLog.TOPIC -> ControllerLog.handle(text) { seq -> publish(TOPIC_CONTROL, "ACK_EVENTS:$seq") }
@@ -197,8 +249,8 @@ object DeviceRepository {
             isCleanSession = true
             isAutomaticReconnect = true
             keepAliveInterval = 30
-            connectionTimeout = 15
-            maxReconnectDelay = 30_000
+            connectionTimeout = 10
+            maxReconnectDelay = 8_000
         }
 
         client = mqtt
@@ -209,7 +261,10 @@ object DeviceRepository {
 
                 override fun onFailure(token: IMqttToken?, e: Throwable?) {
                     Log.w(TAG, "Connect failed", e)
-                    _state.update { it.copy(link = Link.FAILED, linkError = describe(e)) }
+                    _state.update {
+                        it.copy(link = Link.FAILED, linkError = describe(e),
+                            linkLostAt = if (it.linkLostAt > 0) it.linkLostAt else System.currentTimeMillis())
+                    }
                     handler.postDelayed(retry, RETRY_MS)
                 }
             })

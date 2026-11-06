@@ -6,6 +6,8 @@ import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.net.ConnectivityManager
+import android.net.Network
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -50,6 +52,11 @@ class MonitorService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private val retryConnect = Runnable { connect() }
 
+    // Only tell the user about a dropped connection if it stays down a while;
+    // a few seconds' blip (phone switching networks) isn't worth a notification.
+    private val showReconnecting = Runnable { alerts.updateMonitor(getString(R.string.monitor_reconnecting)) }
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+
     private lateinit var alerts: Alerts
     private lateinit var settings: AppSettings
     private lateinit var lastSeen: SharedPreferences
@@ -68,6 +75,23 @@ class MonitorService : Service() {
         settings = AppSettings(this)
         lastSeen = getSharedPreferences(STATE_PREFS, MODE_PRIVATE)
         watchCloud()
+        watchNetwork()
+    }
+
+    /** Reconnect as soon as the phone's network comes back. */
+    private fun watchNetwork() {
+        val cm = getSystemService(ConnectivityManager::class.java) ?: return
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                handler.post {
+                    if (client?.isConnected != true && settings.alertsEnabled && settings.hasCredentials) {
+                        teardown()
+                        connect()
+                    }
+                }
+            }
+        }
+        runCatching { cm.registerDefaultNetworkCallback(callback) }.onSuccess { networkCallback = callback }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -87,6 +111,8 @@ class MonitorService : Service() {
     }
 
     override fun onDestroy() {
+        networkCallback?.let { cb -> runCatching { getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(cb) } }
+        handler.removeCallbacks(showReconnecting)
         scope.cancel()
         teardown()
         super.onDestroy()
@@ -120,6 +146,7 @@ class MonitorService : Service() {
                 // Clean session: subscriptions have to be renewed every time.
                 try {
                     mqtt.subscribe(arrayOf(TOPIC_ONLINE, TOPIC_STATUS, ControllerLog.TOPIC), intArrayOf(1, 1, 1))
+                    handler.removeCallbacks(showReconnecting)
                     alerts.updateMonitor(getString(R.string.monitor_connected))
                 } catch (e: Exception) {
                     Log.e(TAG, "Subscribe failed", e)
@@ -128,11 +155,17 @@ class MonitorService : Service() {
 
             override fun connectionLost(cause: Throwable?) {
                 Log.w(TAG, "Connection lost", cause)
-                alerts.updateMonitor(getString(R.string.monitor_reconnecting))
+                handler.removeCallbacks(showReconnecting)
+                handler.postDelayed(showReconnecting, RECONNECT_NOTICE_DELAY_MS)
             }
 
             override fun messageArrived(topic: String, message: MqttMessage) {
-                handleMessage(topic, String(message.payload, Charsets.UTF_8))
+                // An exception escaping here would make the MQTT library drop the connection.
+                try {
+                    handleMessage(topic, String(message.payload, Charsets.UTF_8))
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to handle message on $topic", e)
+                }
             }
 
             override fun deliveryComplete(token: IMqttDeliveryToken?) = Unit
@@ -145,7 +178,7 @@ class MonitorService : Service() {
             isAutomaticReconnect = true   // after the first successful connect
             keepAliveInterval = 60
             connectionTimeout = 20
-            maxReconnectDelay = 60_000
+            maxReconnectDelay = 15_000
         }
 
         client = mqtt
@@ -341,7 +374,8 @@ class MonitorService : Service() {
         const val TOPIC_CONTROL = "aquarium/control"
 
         private const val ACTION_RECONNECT = "com.solarlamp.aquariumlight.RECONNECT"
-        private const val RETRY_DELAY_MS = 30_000L
+        private const val RETRY_DELAY_MS = 10_000L
+        private const val RECONNECT_NOTICE_DELAY_MS = 20_000L
         private const val AUTH_RETRY_DELAY_MS = 5 * 60_000L
 
         private const val STATE_PREFS = "monitor_state"

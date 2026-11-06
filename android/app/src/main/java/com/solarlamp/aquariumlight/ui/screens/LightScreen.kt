@@ -176,7 +176,7 @@ fun LightScreen(isAdmin: Boolean) {
                     onClick = { sendMode(mode) },
                     icon = icon,
                     selected = status?.mode == mode,
-                    enabled = state.link == com.solarlamp.aquariumlight.data.Link.CONNECTED,
+                    enabled = state.linkOk(now),
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -218,7 +218,7 @@ fun LightScreen(isAdmin: Boolean) {
                 onClick = { save(slots) },
                 style = PillStyle.PRIMARY,
                 icon = Icons.Rounded.Check,
-                enabled = draft != null && !saving && state.link == com.solarlamp.aquariumlight.data.Link.CONNECTED,
+                enabled = draft != null && !saving && state.linkOk(now),
                 modifier = Modifier.fillMaxWidth(),
             )
             if (draft != null && !saving) {
