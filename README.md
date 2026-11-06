@@ -137,6 +137,20 @@ The device downloads the latest release from GitHub and restarts. Every push
 to `main` that touches `firmware/` builds and publishes a new release; the
 binary never contains broker credentials.
 
+**Tests:** `firmware/test/run.sh` compiles the unmodified firmware against a
+simulated board and runs scenarios such as:
+
+- router off before and during a slot
+- power cuts with and without internet
+- a flat RTC cell
+- slots across midnight
+- forced modes surviving restarts
+- ISP and broker outages
+- clock fixes
+- the crash guard and OTA updates
+
+It checks the relay second by second. CI runs it before every firmware release.
+
 **Crash guard:** if the firmware crashes and restarts 3 times in a row, the
 board starts in a minimal *safe mode*. It only connects to WiFi and the broker,
 reports `"safeMode": true`, and accepts On/Off, *Update* and *Restart*. The
