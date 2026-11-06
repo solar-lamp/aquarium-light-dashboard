@@ -25,6 +25,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Scenario tests on a simulated board (WiFi loss, power cuts, flat RTC
+      # cell, midnight, crash guard, OTA...). A failure stops the release.
+      - name: Simulated board tests
+        run: firmware/test/run.sh
+
       - uses: arduino/setup-arduino-cli@v2
 
       - name: Install ESP8266 core and libraries

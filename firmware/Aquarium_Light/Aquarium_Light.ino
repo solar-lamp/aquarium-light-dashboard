@@ -13,10 +13,13 @@
  *                         SET_TIME:YYYY-MM-DDTHH:MM:SS         set the clock (local time)
  *                         UPDATE_FIRMWARE                      install the latest release over the air
  *                         RESTART                              restart (also leaves safe mode)
+ *                         ACK_EVENTS:<seq>                     events up to <seq> are saved; drop them
  *                         RESET_WIFI                           forget WiFi, reopen the setup hotspot
  *   aquarium/schedule  <- "e1,HH:MM,HH:MM,e2,HH:MM,HH:MM"  (e = 1 enabled / 0 disabled)
  *   aquarium/status    -> JSON status, retained, every STATUS_INTERVAL_MS and on change
  *   aquarium/online    -> "1" / "0", retained; "0" is the broker-side last will
+ *   aquarium/events    -> event log not yet saved by the app, retained:
+ *                         {"log":"<id>","events":[{"seq":n,"t":<local epoch or 0>,"text":"..."}]}
  *
  * Crash guard: after CRASH_LIMIT crash restarts in a row the board starts in
  * safe mode, which only connects, reports {"safeMode":true}, and accepts
@@ -77,11 +80,17 @@ const char* const TOPIC_CONTROL  = "aquarium/control";
 const char* const TOPIC_SCHEDULE = "aquarium/schedule";
 const char* const TOPIC_STATUS   = "aquarium/status";
 const char* const TOPIC_ONLINE   = "aquarium/online";
+const char* const TOPIC_EVENTS   = "aquarium/events";
+
+// Event log
+const uint8_t MAX_EVENTS         = 40;   // oldest dropped beyond this
+const uint8_t EVENTS_PER_MESSAGE = 10;
 
 const char* const SCHEDULE_FILE = "/schedule.txt";
 const char* const MODE_FILE     = "/mode.txt";
 const char* const ONTIME_FILE   = "/ontime.txt";
 const char* const MQTT_FILE     = "/mqtt.txt";
+const char* const EVENTS_FILE   = "/events.txt";
 
 // Anything earlier than this means the clock was never set.
 const time_t MIN_VALID_EPOCH = 1700000000;   // Nov 2023
@@ -154,6 +163,24 @@ struct CrashGuard
 bool     safeMode      = false;
 uint32_t crashCount    = 0;
 bool     guardCleared  = false;
+
+// Event log: what the controller did, kept until a phone confirms it saved it.
+struct Event
+{
+    uint32_t seq;
+    uint32_t when;       // local time, seconds since 1970; 0 = clock not set
+    char     text[60];
+};
+
+Event    events[MAX_EVENTS];
+uint8_t  eventCount  = 0;
+uint32_t nextSeq     = 1;
+uint32_t logId       = 0;      // random per flash; keeps ids unique after an erase
+bool     eventsDirty = true;   // publish the log at the next opportunity
+bool     wifiWasUp   = false;
+bool     noTimeLogged = false;
+
+void addEvent(const char* text);   // defined in EVENT LOG below
 
 unsigned long lastControlRun    = 0;
 unsigned long lastStatusPublish = 0;
@@ -260,6 +287,11 @@ void syncRtcFromSystemTime()
     struct tm local;
     localtime_r(&t, &local);
 
+    DateTime internetTime(local.tm_year + 1900, local.tm_mon + 1, local.tm_mday,
+                          local.tm_hour, local.tm_min, local.tm_sec);
+    long drift = (long)rtc.now().unixtime() - (long)internetTime.unixtime();
+    bool wasValid = rtcTimeValid;
+
     rtc.adjust(DateTime(
         local.tm_year + 1900,
         local.tm_mon + 1,
@@ -269,6 +301,14 @@ void syncRtcFromSystemTime()
         local.tm_sec));
 
     rtcTimeValid = true;
+
+    if(!wasValid || drift > 60 || drift < -60)
+    {
+        char text[60];
+        if(!wasValid) snprintf(text, sizeof(text), "Clock set from the internet");
+        else snprintf(text, sizeof(text), "Clock corrected from the internet (%+lds)", drift);
+        addEvent(text);
+    }
 
     Serial.printf("RTC synced from NTP: %04d-%02d-%02d %02d:%02d:%02d\n",
         local.tm_year + 1900, local.tm_mon + 1, local.tm_mday,
@@ -513,6 +553,108 @@ void onPortalParamsSaved()
 }
 
 // =========================================================
+// EVENT LOG
+// =========================================================
+
+uint32_t localEpochNow()
+{
+    int y, mo, d, h, mi, s;
+    if(!readLocalDateTime(y, mo, d, h, mi, s)) return 0;
+    return DateTime(y, mo, d, h, mi, s).unixtime();
+}
+
+void saveEvents()
+{
+    if(!fsAvailable) return;
+
+    File file = LittleFS.open(EVENTS_FILE, "w");
+    if(!file) return;
+
+    file.printf("%lu %lu\n", (unsigned long)logId, (unsigned long)nextSeq);
+    for(uint8_t i = 0; i < eventCount; i++)
+    {
+        file.printf("%lu %lu %s\n", (unsigned long)events[i].seq, (unsigned long)events[i].when, events[i].text);
+    }
+    file.close();
+}
+
+void loadEvents()
+{
+    if(fsAvailable && LittleFS.exists(EVENTS_FILE))
+    {
+        File file = LittleFS.open(EVENTS_FILE, "r");
+        if(file)
+        {
+            String header = file.readStringUntil('\n');
+            unsigned long id, next;
+            if(sscanf(header.c_str(), "%lu %lu", &id, &next) == 2)
+            {
+                logId = id;
+                nextSeq = next;
+            }
+
+            while(eventCount < MAX_EVENTS)
+            {
+                String line = file.readStringUntil('\n');
+                if(line.length() == 0) break;
+
+                unsigned long seq, when;
+                int consumed = 0;
+                if(sscanf(line.c_str(), "%lu %lu %n", &seq, &when, &consumed) >= 2 && consumed > 0)
+                {
+                    Event& e = events[eventCount++];
+                    e.seq = seq;
+                    e.when = when;
+                    strlcpy(e.text, line.c_str() + consumed, sizeof(e.text));
+                }
+            }
+            file.close();
+        }
+    }
+
+    if(logId == 0)
+    {
+        logId = (ESP.getChipId() << 8) ^ (uint32_t)micros() ^ 0x5A5A;
+        if(logId == 0) logId = 1;
+        saveEvents();
+    }
+}
+
+void addEvent(const char* text)
+{
+    if(eventCount == MAX_EVENTS)
+    {
+        memmove(&events[0], &events[1], sizeof(Event) * (MAX_EVENTS - 1));
+        eventCount--;
+    }
+
+    Event& e = events[eventCount++];
+    e.seq = nextSeq++;
+    e.when = localEpochNow();
+    strlcpy(e.text, text, sizeof(e.text));
+    for(char* c = e.text; *c; c++) if(*c == '"' || *c == '\\' || *c == '\n') *c = ' ';
+
+    Serial.printf("Event %lu: %s\n", (unsigned long)e.seq, e.text);
+    saveEvents();
+    eventsDirty = true;
+}
+
+void ackEvents(uint32_t upTo)
+{
+    uint8_t keep = 0;
+    for(uint8_t i = 0; i < eventCount; i++)
+    {
+        if(events[i].seq > upTo) events[keep++] = events[i];
+    }
+    if(keep != eventCount)
+    {
+        eventCount = keep;
+        saveEvents();
+    }
+    eventsDirty = true;   // publish the remainder (or an empty list)
+}
+
+// =========================================================
 // LIGHT CONTROL
 // =========================================================
 
@@ -584,12 +726,27 @@ void runControl()
     // Written every pass so a glitched pin state can't persist.
     digitalWrite(RELAY_PIN, shouldBeOn ? HIGH : LOW);
 
+    if(mode == MODE_AUTO && !haveTime && !noTimeLogged)
+    {
+        noTimeLogged = true;
+        addEvent("No valid time: light kept off until the clock is set");
+    }
+    else if(haveTime)
+    {
+        noTimeLogged = false;
+    }
+
     if(shouldBeOn != lightOn)
     {
         lightOn = shouldBeOn;
         statusDirty = true;
         saveOnTime();
         Serial.printf("Light %s (mode %s)\n", lightOn ? "ON" : "OFF", modeName(mode));
+
+        char text[60];
+        snprintf(text, sizeof(text), "Light turned %s (%s)", lightOn ? "on" : "off",
+            mode == MODE_FORCE_ON ? "forced on" : mode == MODE_FORCE_OFF ? "forced off" : "schedule");
+        addEvent(text);
     }
 }
 
@@ -613,6 +770,7 @@ bool handleSetTime(const char* value)
         rtcTimeValid = true;
     }
     Serial.printf("Clock set to %04d-%02d-%02d %02d:%02d:%02d\n", y, mo, d, h, mi, s);
+    addEvent("Clock set from a phone");
     return true;
 }
 
@@ -627,6 +785,7 @@ void handleControl(const char* message)
     if(strcmp(message, "RESET_WIFI") == 0)
     {
         wifiResetRequested = true;   // acted on from loop()
+        addEvent("WiFi reset from the app");
         return;
     }
 
@@ -636,9 +795,16 @@ void handleControl(const char* message)
         return;
     }
 
+    if(strncmp(message, "ACK_EVENTS:", 11) == 0)
+    {
+        ackEvents((uint32_t)strtoul(message + 11, nullptr, 10));
+        return;
+    }
+
     if(strcmp(message, "RESTART") == 0)
     {
         Serial.println(F("Restart requested"));
+        addEvent("Restarted from the app");
         if(mqtt.connected())
         {
             mqtt.publish(TOPIC_ONLINE, "0", true);
@@ -911,6 +1077,25 @@ void publishStatus()
     mqtt.publish(TOPIC_STATUS, payload, true);
 }
 
+void publishEvents()
+{
+    String payload = "{\"log\":\"" + String((unsigned long)logId) + "\",\"events\":[";
+    uint8_t n = eventCount < EVENTS_PER_MESSAGE ? eventCount : EVENTS_PER_MESSAGE;
+    for(uint8_t i = 0; i < n; i++)
+    {
+        char item[112];
+        snprintf(item, sizeof(item), "%s{\"seq\":%lu,\"t\":%lu,\"text\":\"%s\"}",
+            i ? "," : "", (unsigned long)events[i].seq, (unsigned long)events[i].when, events[i].text);
+        payload += item;
+    }
+    payload += "]}";
+
+    if(mqtt.publish(TOPIC_EVENTS, payload.c_str(), true))
+    {
+        eventsDirty = false;
+    }
+}
+
 void maintainMqtt()
 {
     if(WiFi.status() != WL_CONNECTED || !mqttConfigured())
@@ -945,6 +1130,7 @@ void maintainMqtt()
         mqtt.subscribe(TOPIC_CONTROL);
         mqtt.subscribe(TOPIC_SCHEDULE);
         statusDirty = true;
+        eventsDirty = true;
     }
     else
     {
@@ -1016,6 +1202,13 @@ void maintainWifi()
 {
     // Serves the setup portal while it's open (non-blocking mode).
     wifiManager.process();
+
+    bool up = WiFi.status() == WL_CONNECTED;
+    if(up != wifiWasUp)
+    {
+        wifiWasUp = up;
+        addEvent(up ? "WiFi connected" : "WiFi lost");
+    }
 
     if(WiFi.status() == WL_CONNECTED || wifiManager.getConfigPortalActive())
     {
@@ -1101,6 +1294,14 @@ void setup()
         Serial.println(F("LittleFS mount failed, settings won't persist"));
     }
 
+    loadEvents();
+    {
+        char text[60];
+        snprintf(text, sizeof(text), "Controller started (%s)", ESP.getResetReason().c_str());
+        addEvent(text);
+        if(rtcLostPowerBoot) addEvent("RTC had lost its time (check the coin cell)");
+    }
+
     loadMqttConfig();
 
     // Get the light right before touching the network.
@@ -1148,7 +1349,7 @@ void setup()
     tlsClient.setInsecure();
     mqtt.setServer(mqttHost, mqttPort);
     mqtt.setCallback(onMqttMessage);
-    mqtt.setBufferSize(1024);
+    mqtt.setBufferSize(1536);
 }
 
 void loop()
@@ -1190,6 +1391,11 @@ void loop()
         publishStatus();
         lastStatusPublish = now;
         statusDirty = false;
+    }
+
+    if(mqtt.connected() && eventsDirty)
+    {
+        publishEvents();
     }
 
     if(firmwareUpdateRequested)
