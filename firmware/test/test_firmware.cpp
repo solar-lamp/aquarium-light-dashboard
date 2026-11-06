@@ -51,6 +51,7 @@ std::map<std::string, std::string> retained;
 std::vector<std::pair<std::string, std::string>> inbound;
 int publishCount = 0;
 bool otaAvailable = false;
+int  wifiKicks = 0;
 bool verbose = false;
 
 bool wifiUp() { return routerOn && wifiSaved && staStarted && !portalActive; }
@@ -602,6 +603,81 @@ static void offlineLog() {
     check(batches >= 4 && batches <= 5, "whole backlog delivered in %d batches (max 40 kept)", batches);
 }
 
+// Reads the whole pending log as the app would (acknowledging batch by batch).
+static std::string drainEvents() {
+    std::string all;
+    for (int i = 0; i < 8 && eventsLog().find("\"events\":[]") == std::string::npos; i++) {
+        all += eventsLog();
+        send(TOPIC_CONTROL, ("ACK_EVENTS:" + std::to_string(lastSeq())).c_str());
+        runUntil(worldMs + 2000);
+    }
+    return all;
+}
+
+static void brokerRecovery() {
+    scenario("18. WiFi up but broker unreachable: self-recovery, light unaffected, reason logged");
+    freshWorld(at(9, 0));
+    sim::files["/schedule.txt"] = "1,0,09,30,10,30,00,00,00,00";
+    dev.powerCycle(0);
+    runUntil(at(9, 1));
+    send(TOPIC_CONTROL, ("ACK_EVENTS:" + std::to_string(lastSeq())).c_str());
+    runUntil(at(9, 2));
+    sim::wifiKicks = 0;
+    int bootsBefore = dev.boots;
+
+    sim::brokerOn = false;              // broker refuses; WiFi and internet fine
+    sim::mqttConnected = false;
+    sim::failedConnectMs = 3000;
+    runUntil(at(9, 11), 200);
+    check(sim::wifiKicks == 0, "no WiFi restart before 10 minutes");
+    runUntil(at(9, 13), 200);
+    check(sim::wifiKicks == 1, "WiFi restarted once after 10 minutes without the broker");
+    runUntil(at(10, 1), 200);
+    check(dev.boots == bootsBefore, "no controller restart before 60 minutes");
+    runUntil(at(10, 4), 200);
+    check(dev.boots == bootsBefore + 1, "controller restarted itself after 60 minutes");
+    check(sim::resetReason == 4, "as a normal software restart, not counted as a crash");
+    runUntil(at(10, 35), 200);
+    // A failed broker attempt blocks for a few seconds; switches can wait for it.
+    expectSwitch(1, at(9, 30), 6, "slot start during the outage");
+    expectSwitch(0, at(10, 30), 6, "slot end after the self-restart");
+
+    sim::brokerOn = true;
+    runUntil(at(10, 37));
+    check(sim::mqttConnected, "connects as soon as the broker is back");
+    std::string log = drainEvents();
+    check(log.find("Broker unreachable: broker unavailable") != std::string::npos ||
+          log.find("Broker unreachable: network/TLS failed") != std::string::npos, "reason for the failures logged");
+    check(log.find("No broker for 10 min: restarting WiFi") != std::string::npos, "WiFi restart logged");
+    check(log.find("No broker for 60 min: restarting controller") != std::string::npos, "controller restart logged");
+    check(log.find("Broker connected after") != std::string::npos, "recovery logged");
+    check(!field(status(), "heap").empty() && !field(status(), "rssi").empty(), "status reports free memory and WiFi signal");
+
+    scenario("19. 12-hour ISP outage: hourly self-restarts, light switches kept in the log");
+    freshWorld(at(6, 0));
+    sim::files["/schedule.txt"] = "1,1,08,00,12,00,15,00,17,00";
+    dev.powerCycle(0);
+    runUntil(at(6, 1));
+    send(TOPIC_CONTROL, ("ACK_EVENTS:" + std::to_string(lastSeq())).c_str());
+    runUntil(at(6, 2));
+    int b = dev.boots;
+    setInternet(false);
+    sim::failedConnectMs = 5000;
+    runUntil(at(18, 2), 500);
+    check(dev.boots - b >= 10 && dev.boots - b <= 13, "about one restart per hour (%d)", dev.boots - b);
+    expectSwitch(1, at(8, 0), 6, "08:00 on");
+    expectSwitch(0, at(12, 0), 6, "12:00 off");
+    expectSwitch(1, at(15, 0), 6, "15:00 on");
+    expectSwitch(0, at(17, 0), 6, "17:00 off");
+    setInternet(true);
+    runUntil(at(18, 5));
+    // Read back the whole backlog as the app would.
+    std::string all = drainEvents();
+    int lights = 0;
+    for (size_t p = 0; (p = all.find("Light turned", p)) != std::string::npos; p++) lights++;
+    check(lights == 4, "all 4 light switches survived the log filling up (%d)", lights);
+}
+
 static void otaUpdate() {
     scenario("16. Over-the-air update keeps schedule, mode and on-time");
     freshWorld(at(15, 0));
@@ -641,6 +717,7 @@ int main(int argc, char** argv) {
     longOutage();
     otaUpdate();
     offlineLog();
+    brokerRecovery();
 
     printf("\n%d checks, %d failed\n", g_checks, g_failures);
     dev.unload();

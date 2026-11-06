@@ -192,6 +192,18 @@ fun ClockCard(state: DeviceState, online: Boolean, isAdmin: Boolean) {
             else -> if (ago < 60) "Just now" else "${formatDuration((ago / 60).toInt())} ago"
         })
         status.rtcTemp?.let { InfoRow("RTC temperature", "%.1f °C".format(it)) }
+        status.wifiRssi?.takeIf { it < 0 }?.let { rssi ->
+            val quality = when {
+                rssi >= -60 -> "strong"
+                rssi >= -70 -> "good"
+                rssi >= -80 -> "weak"
+                else -> "very weak, may drop out"
+            }
+            InfoRow("WiFi signal", "$rssi dBm ($quality)", warn = rssi < -80)
+        }
+        status.freeHeap?.let { heap ->
+            InfoRow("Free memory", "${heap / 1024} KB", warn = heap < 12_000)
+        }
         status.uptimeSeconds?.let { up ->
             InfoRow("Running for", formatDuration((up / 60).toInt()) + (status.resetReason?.let { " · last restart: $it" } ?: ""))
         }

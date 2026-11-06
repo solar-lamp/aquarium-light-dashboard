@@ -151,6 +151,13 @@ simulated board and runs scenarios such as:
 
 It checks the relay second by second. CI runs it before every firmware release.
 
+**Self-recovery:** if WiFi is up but the broker can't be reached, the
+controller backs off its reconnect attempts (5 s up to 60 s), so a failing
+attempt never delays the light by more than a moment. It restarts its WiFi
+after 10 minutes and restarts itself after 60, keeping the schedule, mode and
+on-time. Each failure reason is logged, and the status reports WiFi signal
+strength (`rssi`) and free memory (`heap`).
+
 **Crash guard:** if the firmware crashes and restarts 3 times in a row, the
 board starts in a minimal *safe mode*. It only connects to WiFi and the broker,
 reports `"safeMode": true`, and accepts On/Off, *Update* and *Restart*. The

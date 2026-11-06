@@ -66,9 +66,14 @@ const char* const FIRMWARE_URL =
 
 const unsigned long CONTROL_INTERVAL_MS    = 1000;
 const unsigned long STATUS_INTERVAL_MS     = 10000;
-const unsigned long MQTT_RETRY_INTERVAL_MS = 5000;
+const unsigned long MQTT_RETRY_INTERVAL_MS = 5000;     // first retry; doubles while failing
+const unsigned long MQTT_RETRY_MAX_MS      = 60000;
 const unsigned long WIFI_RETRY_INTERVAL_MS = 30000;
 const unsigned long ONTIME_SAVE_MS         = 300000;   // persist on-time every 5 min
+
+// Self-recovery when WiFi is up but the broker can't be reached
+const unsigned long BROKER_WIFI_KICK_MS    = 10UL * 60 * 1000;   // restart WiFi after 10 min
+const unsigned long BROKER_RESTART_MS      = 60UL * 60 * 1000;   // restart the controller after 60 min
 
 // Crash guard
 const uint32_t      CRASH_LIMIT          = 3;        // crash restarts in a row before safe mode
@@ -152,6 +157,7 @@ unsigned long onMsToday   = 0;
 unsigned long lastTickMs  = 0;
 unsigned long lastOnSave  = 0;
 bool          onTimeDirty = false;
+int           lightBeforeRestart = -1;   // relay state saved before the last restart (-1 unknown)
 
 // Crash guard (stored in RTC user memory: survives restarts, not power loss)
 struct CrashGuard
@@ -181,6 +187,13 @@ bool     wifiWasUp   = false;
 bool     noTimeLogged = false;
 
 void addEvent(const char* text);   // defined in EVENT LOG below
+
+// Broker connection health
+unsigned long brokerDownSince = 0;   // millis() when the broker became unreachable (0 = connected)
+bool          wifiKicked      = false;
+uint32_t      mqttFailures    = 0;
+unsigned long mqttRetryMs     = 5000;   // current back-off
+int           lastMqttRc      = 0;
 
 unsigned long lastControlRun    = 0;
 unsigned long lastStatusPublish = 0;
@@ -453,7 +466,7 @@ void saveOnTime()
     File file = LittleFS.open(ONTIME_FILE, "w");
     if(!file) return;
 
-    file.printf("%ld,%lu", onTimeDay, onMsToday);
+    file.printf("%ld,%lu,%d", onTimeDay, onMsToday, lightOn ? 1 : 0);
     file.close();
 }
 
@@ -469,11 +482,14 @@ void loadOnTime()
 
     long day;
     unsigned long ms;
-    if(sscanf(data.c_str(), "%ld,%lu", &day, &ms) == 2 && ms <= 86400000UL)
+    int light = -1;
+    int n = sscanf(data.c_str(), "%ld,%lu,%d", &day, &ms, &light);
+    if(n >= 2 && ms <= 86400000UL)
     {
         onTimeDay = day;
         onMsToday = ms;
     }
+    if(n == 3) lightBeforeRestart = light;
 }
 
 // Broker login: one value per line (host, port, user, password).
@@ -624,7 +640,14 @@ void addEvent(const char* text)
 {
     if(eventCount == MAX_EVENTS)
     {
-        memmove(&events[0], &events[1], sizeof(Event) * (MAX_EVENTS - 1));
+        // Full: drop the oldest entry that isn't a light switch (light
+        // history matters most), or the oldest entry if they all are.
+        uint8_t drop = 0;
+        for(uint8_t i = 0; i < eventCount; i++)
+        {
+            if(strncmp(events[i].text, "Light", 5) != 0) { drop = i; break; }
+        }
+        memmove(&events[drop], &events[drop + 1], sizeof(Event) * (MAX_EVENTS - 1 - drop));
         eventCount--;
     }
 
@@ -743,10 +766,27 @@ void runControl()
         saveOnTime();
         Serial.printf("Light %s (mode %s)\n", lightOn ? "ON" : "OFF", modeName(mode));
 
-        char text[60];
-        snprintf(text, sizeof(text), "Light turned %s (%s)", lightOn ? "on" : "off",
-            mode == MODE_FORCE_ON ? "forced on" : mode == MODE_FORCE_OFF ? "forced off" : "schedule");
-        addEvent(text);
+        // After a restart the light comes back as it was; that isn't a change.
+        bool sameAsBeforeRestart = lightBeforeRestart == (lightOn ? 1 : 0);
+        lightBeforeRestart = -1;
+        if(!sameAsBeforeRestart)
+        {
+            char text[60];
+            snprintf(text, sizeof(text), "Light turned %s (%s)", lightOn ? "on" : "off",
+                mode == MODE_FORCE_ON ? "forced on" : mode == MODE_FORCE_OFF ? "forced off" : "schedule");
+            addEvent(text);
+        }
+    }
+
+    // First pass after a restart with no change: the light was on before the
+    // restart but now stays off (its slot ended meanwhile). Record that.
+    if(lightBeforeRestart != -1)
+    {
+        if(lightBeforeRestart == 1 && !lightOn)
+        {
+            addEvent(haveTime || mode != MODE_AUTO ? "Light turned off (schedule)" : "Light turned off (no valid time)");
+        }
+        lightBeforeRestart = -1;
     }
 }
 
@@ -1052,6 +1092,8 @@ void publishStatus()
         "\"ntpAgo\":%ld,"
         "\"uptime\":%lu,"
         "\"reset\":\"%s\","
+        "\"heap\":%lu,"
+        "\"rssi\":%d,"
         "\"fw\":\"%s\","
         "\"update\":\"%s\"}",
         modeName(mode),
@@ -1070,6 +1112,8 @@ void publishStatus()
         ntpAgo,
         millis() / 1000UL,
         ESP.getResetReason().c_str(),
+        (unsigned long)ESP.getFreeHeap(),
+        (int)WiFi.RSSI(),
         FW_VERSION,
         update.c_str());
 
@@ -1096,6 +1140,73 @@ void publishEvents()
     }
 }
 
+const char* mqttRcText(int rc)
+{
+    switch(rc)
+    {
+        case -4: return "timed out";
+        case -3: return "connection lost";
+        case -2: return "network/TLS failed";
+        case -1: return "disconnected";
+        case 1:  return "bad protocol";
+        case 2:  return "client id rejected";
+        case 3:  return "broker unavailable";
+        case 4:  return "bad username/password";
+        case 5:  return "not authorized";
+        default: return "unknown";
+    }
+}
+
+// WiFi works but the broker stays unreachable: the TLS stack or WiFi can get
+// wedged on these boards. Restart WiFi after a while, and as a last resort the
+// whole controller (schedule, mode and on-time are all kept).
+void checkBrokerHealth()
+{
+    if(!mqttConfigured() || wifiManager.getConfigPortalActive())
+    {
+        brokerDownSince = 0;
+        return;
+    }
+
+    if(mqtt.connected())
+    {
+        brokerDownSince = 0;
+        wifiKicked = false;
+        return;
+    }
+
+    unsigned long now = millis();
+    if(brokerDownSince == 0)
+    {
+        brokerDownSince = now == 0 ? 1 : now;
+        return;
+    }
+
+    if(WiFi.status() != WL_CONNECTED)
+    {
+        return;   // no WiFi at all: nothing a restart would fix; keep waiting
+    }
+
+    unsigned long down = now - brokerDownSince;
+
+    if(!wifiKicked && down >= BROKER_WIFI_KICK_MS)
+    {
+        wifiKicked = true;
+        addEvent("No broker for 10 min: restarting WiFi");
+        WiFi.disconnect();
+        WiFi.begin();
+        return;
+    }
+
+    if(down >= BROKER_RESTART_MS)
+    {
+        addEvent("No broker for 60 min: restarting controller");
+        saveOnTime();
+        delay(200);
+        ESP.restart();
+    }
+}
+
 void maintainMqtt()
 {
     if(WiFi.status() != WL_CONNECTED || !mqttConfigured())
@@ -1111,7 +1222,9 @@ void maintainMqtt()
 
     unsigned long now = millis();
 
-    if(lastMqttAttempt != 0 && now - lastMqttAttempt < MQTT_RETRY_INTERVAL_MS)
+    // Each failed attempt blocks for a few seconds, so back off while the
+    // broker stays unreachable to keep the light control responsive.
+    if(lastMqttAttempt != 0 && now - lastMqttAttempt < mqttRetryMs)
     {
         return;
     }
@@ -1126,6 +1239,16 @@ void maintainMqtt()
     if(mqtt.connect(clientId.c_str(), mqttUser, mqttPass, TOPIC_ONLINE, 1, true, "0"))
     {
         Serial.println(F("MQTT connected"));
+        if(mqttFailures > 0)
+        {
+            char text[60];
+            snprintf(text, sizeof(text), "Broker connected after %lu failed tries", (unsigned long)mqttFailures);
+            addEvent(text);
+        }
+        mqttFailures = 0;
+        mqttRetryMs = MQTT_RETRY_INTERVAL_MS;
+        brokerDownSince = 0;
+        wifiKicked = false;
         mqtt.publish(TOPIC_ONLINE, "1", true);
         mqtt.subscribe(TOPIC_CONTROL);
         mqtt.subscribe(TOPIC_SCHEDULE);
@@ -1134,7 +1257,19 @@ void maintainMqtt()
     }
     else
     {
-        Serial.printf("MQTT connect failed, rc=%d\n", mqtt.state());
+        lastMqttRc = mqtt.state();
+        mqttFailures++;
+        mqttRetryMs = mqttRetryMs * 2 > MQTT_RETRY_MAX_MS ? MQTT_RETRY_MAX_MS : mqttRetryMs * 2;
+        Serial.printf("MQTT connect failed, rc=%d\n", lastMqttRc);
+
+        // Record why, without flooding the log: the first failure, then every 50th.
+        if(mqttFailures == 1 || mqttFailures % 50 == 0)
+        {
+            char text[60];
+            snprintf(text, sizeof(text), "Broker unreachable: %s (%lu tries)",
+                mqttRcText(lastMqttRc), (unsigned long)mqttFailures);
+            addEvent(text);
+        }
     }
 }
 
@@ -1208,6 +1343,11 @@ void maintainWifi()
     {
         wifiWasUp = up;
         addEvent(up ? "WiFi connected" : "WiFi lost");
+        if(up)
+        {
+            mqttRetryMs = MQTT_RETRY_INTERVAL_MS;
+            lastMqttAttempt = 0;
+        }
     }
 
     if(WiFi.status() == WL_CONNECTED || wifiManager.getConfigPortalActive())
@@ -1370,6 +1510,7 @@ void loop()
 
     maintainWifi();
     maintainMqtt();
+    checkBrokerHealth();
 
     if(ntpTimeReceived)
     {
