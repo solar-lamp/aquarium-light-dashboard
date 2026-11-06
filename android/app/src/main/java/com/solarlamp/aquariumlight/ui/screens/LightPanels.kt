@@ -182,7 +182,9 @@ fun ClockCard(state: DeviceState, online: Boolean, isAdmin: Boolean) {
         VSpace(14.dp)
         InfoRow("Coin cell", when {
             status.rtcFound == false -> "RTC not detected; using internet time only"
-            status.rtcLostPower == true -> "Likely flat or missing: the RTC had lost its time at the last power-up. Replace the CR2032 cell."
+            status.rtcLostPower == true -> "The RTC had lost its time when the controller last started. " +
+                "Expected right after a battery change; to re-test, unplug the controller for a minute and plug it back in. " +
+                "If this shows again, the cell is flat or not making contact."
             else -> "OK"
         }, warn = status.rtcFound == false || status.rtcLostPower == true)
         InfoRow("Last internet sync", when (val ago = status.ntpAgoSeconds) {
