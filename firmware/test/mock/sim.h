@@ -41,6 +41,7 @@ static const uint8_t D5 = 14;
 #define F(x) (x)
 
 inline unsigned long millis() { return (unsigned long)(sim::worldMs - (int64_t)sim::bootMs); }
+inline unsigned long micros() { return millis() * 1000UL + 123; }
 inline void delay(unsigned long ms) { sim::advance(ms); }
 inline void yield() {}
 inline void pinMode(uint8_t, uint8_t) {}

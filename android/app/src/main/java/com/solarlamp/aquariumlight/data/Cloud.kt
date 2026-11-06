@@ -264,6 +264,24 @@ object Cloud {
         )
     }
 
+    /** Controller log entries, saved once each whatever phone uploads them. */
+    fun saveControllerEvents(log: String, entries: List<ControllerLog.Entry>): com.google.android.gms.tasks.Task<Void> {
+        val batch = db.batch()
+        for (e in entries) {
+            val type = if (e.text.startsWith("Light")) HistoryType.LIGHT else HistoryType.DEVICE
+            batch.set(
+                history.document("device-ev-$log-${e.seq}"),
+                mapOf(
+                    "at" to e.at.toTimestamp(),
+                    "type" to type.name,
+                    "text" to if (e.clockKnown) e.text else "${e.text} (time unknown)",
+                    "byName" to "Controller",
+                ),
+            )
+        }
+        return batch.commit()
+    }
+
     fun historyFlow(limit: Long = 200): Flow<List<HistoryEntry>> =
         history.orderBy("at", Query.Direction.DESCENDING).limit(limit).listen()
             .map { s -> s.documents.map(::historyFrom) }

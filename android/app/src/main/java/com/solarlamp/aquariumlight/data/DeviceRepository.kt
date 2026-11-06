@@ -163,7 +163,7 @@ object DeviceRepository {
         mqtt.setCallback(object : MqttCallbackExtended {
             override fun connectComplete(reconnect: Boolean, serverURI: String?) {
                 try {
-                    mqtt.subscribe(arrayOf(TOPIC_STATUS, TOPIC_ONLINE), intArrayOf(1, 1))
+                    mqtt.subscribe(arrayOf(TOPIC_STATUS, TOPIC_ONLINE, ControllerLog.TOPIC), intArrayOf(1, 1, 1))
                 } catch (e: Exception) {
                     Log.e(TAG, "Subscribe failed", e)
                 }
@@ -180,6 +180,7 @@ object DeviceRepository {
                 val text = String(message.payload, Charsets.UTF_8)
                 when (topic) {
                     TOPIC_ONLINE -> _state.update { it.copy(onlineFlag = text.trim() == "1") }
+                    ControllerLog.TOPIC -> ControllerLog.handle(text) { seq -> publish(TOPIC_CONTROL, "ACK_EVENTS:$seq") }
                     TOPIC_STATUS -> DeviceStatus.parse(text)?.let { status ->
                         _state.update { it.copy(status = status, statusAt = System.currentTimeMillis()) }
                         cache().edit().putString(KEY_LAST_STATUS, text).apply()

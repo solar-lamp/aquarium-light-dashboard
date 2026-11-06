@@ -177,6 +177,7 @@ struct Device {
 static Device dev;
 
 static constexpr int REASON_EXCEPTION_RST_VALUE = 2;
+
 static constexpr int REASON_SOFT_WDT_RST_VALUE = 3;
 
 // =========================================================
@@ -219,6 +220,21 @@ static void setInternet(bool on) {
 static void send(const char* topic, const char* msg) { sim::inbound.push_back({ topic, msg }); }
 
 static std::string status() { return sim::retained["aquarium/status"]; }
+static std::string eventsLog() { return sim::retained["aquarium/events"]; }
+
+// Device-local epoch seconds of an event with this text in the published log (0 if absent).
+static long eventTime(const std::string& text) {
+    std::string log = eventsLog();
+    size_t p = log.find("\"text\":\"" + text);
+    if (p == std::string::npos) return 0;
+    size_t t = log.rfind("\"t\":", p);
+    return atol(log.c_str() + t + 4);
+}
+static long lastSeq() {
+    std::string log = eventsLog();
+    size_t p = log.rfind("\"seq\":");
+    return p == std::string::npos ? 0 : atol(log.c_str() + p + 6);
+}
 static std::string field(const std::string& json, const char* key) {
     std::string k = std::string("\"") + key + "\":";
     size_t p = json.find(k);
@@ -534,6 +550,58 @@ static void longOutage() {
     }
 }
 
+static void offlineLog() {
+    scenario("17. Offline log: what happened while offline reaches the app with exact times");
+    freshWorld(at(11, 0));
+    sim::files["/schedule.txt"] = "1,1,11,15,11,17,19,00,22,30";
+    dev.powerCycle(0);
+    runUntil(at(11, 1));
+    // The app saves whatever is pending and confirms it.
+    send(TOPIC_CONTROL, ("ACK_EVENTS:" + std::to_string(lastSeq())).c_str());
+    runUntil(at(11, 2));
+    check(eventsLog().find("\"events\":[]") != std::string::npos, "log empty once the app confirmed it");
+
+    setRouter(false);
+    runUntil(at(11, 16));
+    dev.powerCycle(30000);                     // power cut too, still no router
+    runUntil(at(11, 20));
+    setRouter(true);
+    runUntil(at(11, 21));
+
+    std::string log = eventsLog();
+    check(log.find("WiFi lost") != std::string::npos, "logged: WiFi lost");
+    long on = eventTime("Light turned on (schedule)");
+    check(on == at(11, 15) / 1000, "logged: light on at 11:15:00 device time (got %+lds)", on - at(11, 15) / 1000);
+    check(log.find("Controller started (Power On)") != std::string::npos, "logged: restart after the power cut");
+    long off = eventTime("Light turned off (schedule)");
+    check(off >= at(11, 17) / 1000 && off <= at(11, 17, 2) / 1000, "logged: light off at 11:17 (survived the power cut)");
+    check(log.find("WiFi connected") != std::string::npos, "logged: WiFi back");
+
+    // Not confirmed yet: still there after another restart.
+    dev.crash(4);
+    runUntil(at(11, 22));
+    check(eventTime("Light turned on (schedule)") == on, "unconfirmed events kept across restarts");
+    send(TOPIC_CONTROL, ("ACK_EVENTS:" + std::to_string(lastSeq())).c_str());
+    runUntil(at(11, 23));
+    check(eventsLog().find("Light turned on") == std::string::npos, "confirmed events removed from the device");
+
+    // Long outage: only the newest 40 are kept, sent 10 at a time.
+    setRouter(false);
+    for (int i = 0; i < 30; i++) { send(TOPIC_CONTROL, "FORCE_ON"); setRouter(true); runUntil(worldMs + 20000); setRouter(false); runUntil(worldMs + 20000); }
+    setRouter(true);
+    runUntil(worldMs + 60000);
+    size_t count = 0;
+    for (size_t p = 0; (p = eventsLog().find("\"seq\"", p)) != std::string::npos; p++) count++;
+    check(count == 10, "large backlog sent in batches of 10 (got %zu)", count);
+    int batches = 0;
+    while (eventsLog().find("\"events\":[]") == std::string::npos && batches < 10) {
+        send(TOPIC_CONTROL, ("ACK_EVENTS:" + std::to_string(lastSeq())).c_str());
+        runUntil(worldMs + 2000);
+        batches++;
+    }
+    check(batches >= 4 && batches <= 5, "whole backlog delivered in %d batches (max 40 kept)", batches);
+}
+
 static void otaUpdate() {
     scenario("16. Over-the-air update keeps schedule, mode and on-time");
     freshWorld(at(15, 0));
@@ -572,6 +640,7 @@ int main(int argc, char** argv) {
     noCredentialsFresh();
     longOutage();
     otaUpdate();
+    offlineLog();
 
     printf("\n%d checks, %d failed\n", g_checks, g_failures);
     dev.unload();

@@ -173,9 +173,10 @@ If you're not in IST, change `UTC_OFFSET_SECONDS` at the top of the sketch.
 
 | Topic | Direction | Payload |
 | --- | --- | --- |
-| `aquarium/control` | app/dashboard → device | `AUTO`, `FORCE_ON`, `FORCE_OFF`, `STATUS`, `SYNC_TIME`, `SET_TIME:YYYY-MM-DDTHH:MM:SS`, `UPDATE_FIRMWARE`, `RESTART`, `RESET_WIFI` |
+| `aquarium/control` | app/dashboard → device | `AUTO`, `FORCE_ON`, `FORCE_OFF`, `STATUS`, `SYNC_TIME`, `SET_TIME:YYYY-MM-DDTHH:MM:SS`, `UPDATE_FIRMWARE`, `RESTART`, `RESET_WIFI`, `ACK_EVENTS:<seq>` |
 | `aquarium/schedule` | dashboard → device | `e1,HH:MM,HH:MM,e2,HH:MM,HH:MM` (`e` = `1` enabled, `0` disabled) |
 | `aquarium/status` | device → dashboard | JSON, retained, every 10 s and on every change |
+| `aquarium/events` | device → app | Retained log of what the controller did (light switches, WiFi lost/back, restarts, clock set), including while offline: `{"log":"<id>","events":[{"seq":1,"t":<local epoch>,"text":"…"}]}`. The first phone to see it saves it to History and sends `ACK_EVENTS:<seq>`, then the device drops those entries. |
 | `aquarium/online` | device → dashboard | `1` / `0`, retained. The broker sends `0` as the last will if the device drops off |
 
 Example status:

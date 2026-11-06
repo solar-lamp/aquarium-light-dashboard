@@ -13,6 +13,7 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import com.solarlamp.aquariumlight.data.Access
 import com.solarlamp.aquariumlight.data.Cloud
+import com.solarlamp.aquariumlight.data.ControllerLog
 import com.solarlamp.aquariumlight.data.MemberStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -118,7 +119,7 @@ class MonitorService : Service() {
             override fun connectComplete(reconnect: Boolean, serverURI: String?) {
                 // Clean session: subscriptions have to be renewed every time.
                 try {
-                    mqtt.subscribe(arrayOf(TOPIC_ONLINE, TOPIC_STATUS), intArrayOf(1, 1))
+                    mqtt.subscribe(arrayOf(TOPIC_ONLINE, TOPIC_STATUS, ControllerLog.TOPIC), intArrayOf(1, 1, 1))
                     alerts.updateMonitor(getString(R.string.monitor_connected))
                 } catch (e: Exception) {
                     Log.e(TAG, "Subscribe failed", e)
@@ -267,6 +268,10 @@ class MonitorService : Service() {
                 }
             }
 
+            ControllerLog.TOPIC -> ControllerLog.handle(payload) { seq ->
+                runCatching { client?.publish(TOPIC_CONTROL, "ACK_EVENTS:$seq".toByteArray(), 1, false) }
+            }
+
             TOPIC_STATUS -> {
                 val status = try {
                     JSONObject(payload)
@@ -288,11 +293,10 @@ class MonitorService : Service() {
                     alerts.modeChanged(mode)
                 }
 
-                if (light != null && remember(KEY_LIGHT, light) != null) {
-                    Cloud.logDeviceEvent("light-$light",
-                        "Light turned ${if (light == "ON") "on" else "off"}" +
-                            (mode?.let { " (${Alerts.modeLabel(it)})" } ?: ""))
-                    if (settings.notifyLight) alerts.lightChanged(light == "ON", mode)
+                // History gets light switches from the controller's own log (exact
+                // times, even while offline); here we only notify.
+                if (light != null && remember(KEY_LIGHT, light) != null && settings.notifyLight) {
+                    alerts.lightChanged(light == "ON", mode)
                 }
             }
         }
@@ -334,6 +338,7 @@ class MonitorService : Service() {
 
         const val TOPIC_STATUS = "aquarium/status"
         const val TOPIC_ONLINE = "aquarium/online"
+        const val TOPIC_CONTROL = "aquarium/control"
 
         private const val ACTION_RECONNECT = "com.solarlamp.aquariumlight.RECONNECT"
         private const val RETRY_DELAY_MS = 30_000L
