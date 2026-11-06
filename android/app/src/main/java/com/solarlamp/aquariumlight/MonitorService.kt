@@ -62,6 +62,7 @@ class MonitorService : Service() {
     private lateinit var lastSeen: SharedPreferences
 
     private var client: MqttAsyncClient? = null
+    @Volatile private var connecting = false
 
     // Shared-data listeners (feeding, join requests) while the service runs.
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -85,8 +86,7 @@ class MonitorService : Service() {
             override fun onAvailable(network: Network) {
                 handler.post {
                     if (client?.isConnected != true && settings.alertsEnabled && settings.hasCredentials) {
-                        teardown()
-                        connect()
+                        reconnectNow()
                     }
                 }
             }
@@ -125,7 +125,7 @@ class MonitorService : Service() {
     private fun connect() {
         handler.removeCallbacks(retryConnect)
 
-        if (client?.isConnected == true) {
+        if (client?.isConnected == true || connecting) {
             return
         }
 
@@ -184,10 +184,15 @@ class MonitorService : Service() {
         client = mqtt
 
         try {
+            connecting = true
             mqtt.connect(options, null, object : IMqttActionListener {
-                override fun onSuccess(token: IMqttToken?) = Unit
+                override fun onSuccess(token: IMqttToken?) {
+                    if (client === mqtt) connecting = false
+                }
 
                 override fun onFailure(token: IMqttToken?, e: Throwable?) {
+                    if (client !== mqtt) return   // an abandoned attempt
+                    connecting = false
                     // Automatic reconnect only covers drops after a successful
                     // connect, so retry the first connection ourselves.
                     Log.w(TAG, "Connect failed", e)
@@ -205,6 +210,7 @@ class MonitorService : Service() {
             })
         } catch (e: Exception) {
             Log.e(TAG, "Connect threw", e)
+            connecting = false
             handler.postDelayed(retryConnect, RETRY_DELAY_MS)
         }
     }
@@ -215,36 +221,45 @@ class MonitorService : Service() {
             code == MqttException.REASON_CODE_NOT_AUTHORIZED.toInt()
     }
 
+    /**
+     * Network came back: nudge the existing client rather than starting a
+     * second one (two clients would fight over the same broker session).
+     */
+    private fun reconnectNow() {
+        val mqtt = client
+        when {
+            mqtt == null -> connect()
+            mqtt.isConnected || connecting -> Unit
+            else -> runCatching { mqtt.reconnect() }.onFailure {
+                Log.i(TAG, "Reconnect not possible (${it.message}), starting afresh")
+                teardown()
+                connect()
+            }
+        }
+    }
+
     private fun teardown() {
         handler.removeCallbacks(retryConnect)
 
         val mqtt = client ?: return
         client = null
 
-        try {
-            mqtt.setCallback(null)
-            if (mqtt.isConnected) {
-                mqtt.disconnectForcibly(0, 1000)
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Disconnect failed", e)
-        }
+        connecting = false
 
-        try {
-            mqtt.close()
-        } catch (e: Exception) {
-            Log.w(TAG, "Close failed", e)
-        }
+        // Shut it down completely, even mid-connect or mid-reconnect. A client
+        // left half-alive keeps reconnecting in the background.
+        runCatching { mqtt.setCallback(null) }
+        runCatching { mqtt.disconnectForcibly(0, 500, false) }
+        runCatching { mqtt.close(true) }.onFailure { Log.w(TAG, "Close failed", it) }
     }
 
-    /** Stable per install, so the broker sees one consistent client. */
+    /** Install-stable prefix plus a per-connection suffix. */
     private fun clientId(): String {
-        val existing = lastSeen.getString(KEY_CLIENT_ID, null)
-        if (existing != null) return existing
-
-        val id = "aquarium-app-" + UUID.randomUUID().toString().take(8)
-        lastSeen.edit().putString(KEY_CLIENT_ID, id).apply()
-        return id
+        val base = lastSeen.getString(KEY_CLIENT_ID, null)
+            ?: ("aquarium-app-" + UUID.randomUUID().toString().take(8))
+                .also { lastSeen.edit().putString(KEY_CLIENT_ID, it).apply() }
+        // Unique per connection, so an old connection can never kick off a new one.
+        return base + "-" + UUID.randomUUID().toString().take(4)
     }
 
     // -----------------------------------------------------------------

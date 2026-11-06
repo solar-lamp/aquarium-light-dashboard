@@ -84,6 +84,7 @@ object DeviceRepository {
     private lateinit var appContext: Context
     private var client: MqttAsyncClient? = null
     private var started = false
+    @Volatile private var connecting = false
 
     // Reconnect the moment the phone's network comes back, instead of
     // waiting for the next scheduled retry.
@@ -117,9 +118,7 @@ object DeviceRepository {
             override fun onAvailable(network: Network) {
                 handler.post {
                     if (started && client?.isConnected != true) {
-                        Log.i(TAG, "Network available, reconnecting now")
-                        teardown()
-                        connect()
+                        reconnectNow()
                     }
                 }
             }
@@ -183,7 +182,7 @@ object DeviceRepository {
 
     private fun connect() {
         handler.removeCallbacks(retry)
-        if (!started || client?.isConnected == true) return
+        if (!started || client?.isConnected == true || connecting) return
 
         val settings = AppSettings(appContext)
 
@@ -256,10 +255,15 @@ object DeviceRepository {
         client = mqtt
 
         try {
+            connecting = true
             mqtt.connect(options, null, object : IMqttActionListener {
-                override fun onSuccess(token: IMqttToken?) = Unit
+                override fun onSuccess(token: IMqttToken?) {
+                    if (client === mqtt) connecting = false
+                }
 
                 override fun onFailure(token: IMqttToken?, e: Throwable?) {
+                    if (client !== mqtt) return   // an abandoned attempt
+                    connecting = false
                     Log.w(TAG, "Connect failed", e)
                     _state.update {
                         it.copy(link = Link.FAILED, linkError = describe(e),
@@ -269,8 +273,26 @@ object DeviceRepository {
                 }
             })
         } catch (e: Exception) {
+            connecting = false
             _state.update { it.copy(link = Link.FAILED, linkError = describe(e)) }
             handler.postDelayed(retry, RETRY_MS)
+        }
+    }
+
+    /**
+     * Network came back: nudge the existing client rather than starting a
+     * second one (two clients would fight over the same broker session).
+     */
+    private fun reconnectNow() {
+        val mqtt = client
+        when {
+            mqtt == null -> connect()
+            mqtt.isConnected || connecting -> Unit
+            else -> runCatching { mqtt.reconnect() }.onFailure {
+                Log.i(TAG, "Reconnect not possible (${it.message}), starting afresh")
+                teardown()
+                connect()
+            }
         }
     }
 
@@ -279,17 +301,13 @@ object DeviceRepository {
         val mqtt = client ?: return
         client = null
 
-        try {
-            mqtt.setCallback(null)
-            if (mqtt.isConnected) mqtt.disconnectForcibly(0, 1000)
-        } catch (e: Exception) {
-            Log.w(TAG, "Disconnect failed", e)
-        }
-        try {
-            mqtt.close()
-        } catch (e: Exception) {
-            Log.w(TAG, "Close failed", e)
-        }
+        connecting = false
+
+        // Shut it down completely, even mid-connect or mid-reconnect. A client
+        // left half-alive keeps reconnecting in the background.
+        runCatching { mqtt.setCallback(null) }
+        runCatching { mqtt.disconnectForcibly(0, 500, false) }
+        runCatching { mqtt.close(true) }.onFailure { Log.w(TAG, "Close failed", it) }
     }
 
     private fun publish(topic: String, payload: String): Boolean {
@@ -318,7 +336,10 @@ object DeviceRepository {
 
     private fun clientId(): String {
         val prefs = cache()
-        return prefs.getString("client_id", null) ?: ("aquarium-ui-" + UUID.randomUUID().toString().take(8))
+        val base = prefs.getString("client_id", null) ?: ("aquarium-ui-" + UUID.randomUUID().toString().take(8))
             .also { prefs.edit().putString("client_id", it).apply() }
+        // Unique per connection, so an old connection can never be confused
+        // with (and kick off) a new one.
+        return base + "-" + UUID.randomUUID().toString().take(4)
     }
 }
