@@ -70,6 +70,8 @@ data class DeviceStatus(
     /** Crash guard: the controller restarted into minimal safe mode. */
     val safeMode: Boolean = false,
     val crashes: Int? = null,
+    val freeHeap: Long? = null,      // bytes
+    val wifiRssi: Int? = null,       // dBm
 ) {
     val time: TimeOfDay? get() = TimeOfDay.parse(clock)
 
@@ -120,6 +122,8 @@ data class DeviceStatus(
                 updateMessage = o.optString("update").takeIf { it.isNotEmpty() },
                 safeMode = o.optBoolean("safeMode", false),
                 crashes = if (o.has("crashes")) o.optInt("crashes") else null,
+                freeHeap = if (o.has("heap")) o.optLong("heap") else null,
+                wifiRssi = if (o.has("rssi")) o.optInt("rssi") else null,
             )
         } catch (e: JSONException) {
             null

@@ -69,6 +69,7 @@ extern int publishCount;
 
 // OTA
 extern bool otaAvailable;
+extern int  wifiKicks;
 
 extern bool verbose;
 

@@ -124,6 +124,7 @@ struct rst_info { uint32_t reason; };
 struct EspClass {
     rst_info info;
     uint32_t getChipId() { return 0x91a3c5; }
+    uint32_t getFreeHeap() { return 31000; }
     [[noreturn]] void restart() { throw sim::Reboot{ REASON_SOFT_RESTART }; }
     rst_info* getResetInfoPtr() { info.reason = (uint32_t)sim::resetReason; return &info; }
     String getResetReason() {
@@ -261,6 +262,8 @@ static LittleFSClass LittleFS;
 struct WiFiClass {
     void mode(int) {}
     void begin() { sim::staStarted = true; }
+    void disconnect() { sim::staStarted = false; sim::wifiKicks++; }
+    int RSSI() { return sim::wifiUp() ? -61 : 31; }
     int status() { return sim::wifiUp() ? WL_CONNECTED : WL_DISCONNECTED; }
 };
 static WiFiClass WiFi;
