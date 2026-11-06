@@ -37,8 +37,9 @@ fun rememberNow(): State<Long> = produceState(System.currentTimeMillis()) {
 @Composable
 fun ConnectionChip(state: DeviceState, now: Long, modifier: Modifier = Modifier) {
     val (text, color) = when {
-        state.link != Link.CONNECTED -> "Connecting" to Ocean.TextMuted
+        state.link != Link.CONNECTED -> (if (state.isCached) "Updating…" else "Connecting") to Ocean.TextMuted
         state.deviceOnline(now) -> "Online" to Ocean.Cyan
+        state.isCached && state.onlineFlag != false -> "Updating…" to Ocean.TextMuted
         state.status == null && state.onlineFlag == null -> "Waiting" to Ocean.TextMuted
         else -> "Offline" to Ocean.Coral
     }

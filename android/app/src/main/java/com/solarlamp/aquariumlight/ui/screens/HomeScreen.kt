@@ -102,7 +102,7 @@ fun HomeScreen(
         // Headline, styled like the reference: light words + bold words
         val (lead, bold) = when {
             status == null -> "Connecting to" to "your tank."
-            !online -> "Your tank is" to "offline."
+            state.deviceOffline(now) -> "Your tank is" to "offline."
             status.lightOn -> "Lights are" to "on."
             else -> "Lights are" to "off."
         }
@@ -131,6 +131,7 @@ fun HomeScreen(
                     )
                     VSpace(4.dp)
                     MutedText(status?.mode?.label?.let { "Mode: $it" } ?: "Mode: —")
+                    status?.onTodaySeconds?.let { MutedText("On ${formatDuration((it / 60).toInt())} today") }
                     VSpace(10.dp)
                     ConnectionChip(state, now)
                 }

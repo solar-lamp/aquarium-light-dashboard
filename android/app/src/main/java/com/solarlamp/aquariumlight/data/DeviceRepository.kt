@@ -35,6 +35,13 @@ data class DeviceState(
     fun deviceOnline(now: Long): Boolean =
         link == Link.CONNECTED && onlineFlag != false && status != null && now - statusAt < STALE_MS
 
+    /** Known to be offline (not merely still connecting or waiting). */
+    fun deviceOffline(now: Long): Boolean =
+        link == Link.CONNECTED && (onlineFlag == false || (statusAt > 0 && now - statusAt >= STALE_MS))
+
+    /** Showing the last state saved on this phone, not yet refreshed. */
+    val isCached: Boolean get() = status != null && statusAt == 0L
+
     companion object {
         const val STALE_MS = 30_000L
     }
@@ -53,6 +60,7 @@ object DeviceRepository {
     private const val TOPIC_SCHEDULE = "aquarium/schedule"
     private const val RETRY_MS = 10_000L
     private const val CONFIRM_TIMEOUT_MS = 15_000L
+    private const val KEY_LAST_STATUS = "last_status"
 
     private val _state = MutableStateFlow(DeviceState())
     val state: StateFlow<DeviceState> = _state
@@ -67,6 +75,13 @@ object DeviceRepository {
     fun start(context: Context) {
         appContext = context.applicationContext
         started = true
+
+        // Show the last known state instantly while connecting.
+        if (_state.value.status == null) {
+            cache().getString(KEY_LAST_STATUS, null)?.let { DeviceStatus.parse(it) }?.let { cached ->
+                _state.update { it.copy(status = cached, statusAt = 0L) }
+            }
+        }
         connect()
     }
 
@@ -93,6 +108,22 @@ object DeviceRepository {
     fun saveSchedule(slots: List<Slot>): Boolean = publish(TOPIC_SCHEDULE, scheduleMessage(slots))
 
     fun resetWifi(): Boolean = publish(TOPIC_CONTROL, "RESET_WIFI")
+
+    /** Ask the controller to re-sync its clock from the internet. */
+    fun syncTime(): Boolean = publish(TOPIC_CONTROL, "SYNC_TIME")
+
+    /** Set the controller's clock to this phone's local time. */
+    fun setTimeFromPhone(): Boolean {
+        val now = java.time.LocalDateTime.now()
+            .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss"))
+        return publish(TOPIC_CONTROL, "SET_TIME:$now")
+    }
+
+    /** Ask the controller to install the latest firmware release. */
+    fun updateFirmware(): Boolean = publish(TOPIC_CONTROL, "UPDATE_FIRMWARE")
+
+    /** Ask for a status report right now instead of waiting for the next one. */
+    fun requestStatus(): Boolean = publish(TOPIC_CONTROL, "STATUS")
 
     suspend fun confirm(matches: (DeviceStatus) -> Boolean): Boolean =
         withTimeoutOrNull(CONFIRM_TIMEOUT_MS) {
@@ -134,6 +165,8 @@ object DeviceRepository {
                     Log.e(TAG, "Subscribe failed", e)
                 }
                 _state.update { it.copy(link = Link.CONNECTED, linkError = null) }
+                // Don't wait up to 10 s for the next scheduled report.
+                requestStatus()
             }
 
             override fun connectionLost(cause: Throwable?) {
@@ -146,6 +179,7 @@ object DeviceRepository {
                     TOPIC_ONLINE -> _state.update { it.copy(onlineFlag = text.trim() == "1") }
                     TOPIC_STATUS -> DeviceStatus.parse(text)?.let { status ->
                         _state.update { it.copy(status = status, statusAt = System.currentTimeMillis()) }
+                        cache().edit().putString(KEY_LAST_STATUS, text).apply()
                     }
                 }
             }
@@ -221,8 +255,10 @@ object DeviceRepository {
         }
     }
 
+    private fun cache() = appContext.getSharedPreferences("device_repo", Context.MODE_PRIVATE)
+
     private fun clientId(): String {
-        val prefs = appContext.getSharedPreferences("device_repo", Context.MODE_PRIVATE)
+        val prefs = cache()
         return prefs.getString("client_id", null) ?: ("aquarium-ui-" + UUID.randomUUID().toString().take(8))
             .also { prefs.edit().putString("client_id", it).apply() }
     }
