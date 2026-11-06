@@ -55,8 +55,35 @@ data class DeviceStatus(
     val slots: List<Slot>,
     /** False for firmware that doesn't report slot enabled flags. */
     val reportsEnabledFlags: Boolean,
+    /** Fields below are null on firmware older than the clock/OTA update. */
+    val date: String? = null,             // "YYYY-MM-DD" device date
+    val onTodaySeconds: Long? = null,     // light on-time today, any mode
+    val timeSource: String? = null,       // "rtc" | "ntp" | "none"
+    val rtcFound: Boolean? = null,
+    val rtcLostPower: Boolean? = null,    // RTC had lost its time at power-up
+    val rtcTemp: Double? = null,
+    val ntpAgoSeconds: Long? = null,      // -1 = never synced since boot
+    val uptimeSeconds: Long? = null,
+    val resetReason: String? = null,
+    val firmware: String? = null,
+    val updateMessage: String? = null,
 ) {
     val time: TimeOfDay? get() = TimeOfDay.parse(clock)
+
+    /** Device's local date and time, if it reports both. */
+    val dateTime: java.time.LocalDateTime?
+        get() = runCatching { java.time.LocalDateTime.parse("${date}T$clock") }.getOrNull()
+
+    /** Minutes per day the schedule keeps the light on (overlaps counted once). */
+    val scheduledMinutesPerDay: Int
+        get() = (0 until 1440).count { m -> slots.any { it.isActiveAt(TimeOfDay(m)) } }
+
+    /** Scheduled minutes still to come today, from the device's clock. */
+    val scheduledMinutesLeftToday: Int?
+        get() {
+            val now = time ?: return null
+            return (now.minutes until 1440).count { m -> slots.any { it.isActiveAt(TimeOfDay(m)) } }
+        }
 
     companion object {
         fun parse(json: String): DeviceStatus? = try {
@@ -77,6 +104,17 @@ data class DeviceStatus(
                 clock = o.optString("time").takeIf { it.isNotEmpty() },
                 slots = listOfNotNull(slot(1), slot(2)),
                 reportsEnabledFlags = hasFlags,
+                date = o.optString("date").takeIf { it.isNotEmpty() },
+                onTodaySeconds = if (o.has("onToday")) o.optLong("onToday") else null,
+                timeSource = o.optString("timeSource").takeIf { it.isNotEmpty() },
+                rtcFound = if (o.has("rtcFound")) o.optBoolean("rtcFound") else null,
+                rtcLostPower = if (o.has("rtcLostPower")) o.optBoolean("rtcLostPower") else null,
+                rtcTemp = if (o.has("rtcTemp") && !o.isNull("rtcTemp")) o.optDouble("rtcTemp") else null,
+                ntpAgoSeconds = if (o.has("ntpAgo")) o.optLong("ntpAgo") else null,
+                uptimeSeconds = if (o.has("uptime")) o.optLong("uptime") else null,
+                resetReason = o.optString("reset").takeIf { it.isNotEmpty() },
+                firmware = o.optString("fw").takeIf { it.isNotEmpty() },
+                updateMessage = o.optString("update").takeIf { it.isNotEmpty() },
             )
         } catch (e: JSONException) {
             null

@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Aquarium Light</string>
+    <string name="app_name">AquaHome</string>
 
     <!-- Notification channels -->
     <string name="channel_monitor">Background connection</string>
@@ -14,9 +14,9 @@
     <string name="monitor_failed">Can\'t reach broker, retrying: %1$s</string>
     <string name="monitor_auth_failed">Broker rejected the username or password. Check them in Settings (they\'re case-sensitive).</string>
     <string name="monitor_no_credentials">Add broker details in Settings</string>
-    <string name="alert_offline_title">Aquarium light is offline</string>
+    <string name="alert_offline_title">Tank controller is offline</string>
     <string name="alert_offline_text">The controller dropped off the internet. It keeps following its schedule on its own clock.</string>
-    <string name="alert_online_title">Aquarium light is back online</string>
+    <string name="alert_online_title">Tank controller is back online</string>
     <string name="alert_light_on">Light turned on</string>
     <string name="alert_light_off">Light turned off</string>
     <string name="alert_mode_title">Mode changed to %1$s</string>

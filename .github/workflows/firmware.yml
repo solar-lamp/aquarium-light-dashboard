@@ -1,0 +1,71 @@
+name: Firmware
+
+on:
+  push:
+    paths:
+      - "firmware/**"
+      - ".github/workflows/firmware.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: firmware-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # to publish the binary as a release on main
+
+    env:
+      FQBN: esp8266:esp8266:nodemcuv2
+      ESP8266_INDEX: https://arduino.esp8266.com/stable/package_esp8266com_index.json
+      FW_VERSION: 1.${{ github.run_number }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: arduino/setup-arduino-cli@v2
+
+      - name: Install ESP8266 core and libraries
+        run: |
+          arduino-cli core update-index --additional-urls "$ESP8266_INDEX"
+          arduino-cli core install esp8266:esp8266@3.1.2 --additional-urls "$ESP8266_INDEX"
+          arduino-cli lib install "WiFiManager@2.0.17" "PubSubClient@2.8" "RTClib@2.1.4"
+
+      # The published binary must not contain anyone's broker login: the
+      # device keeps its own in flash. So build with an empty secrets.h.
+      - name: Prepare build files
+        working-directory: firmware/Aquarium_Light
+        run: |
+          sed -e 's/MQTT_USER     = ".*"/MQTT_USER     = ""/' \
+              -e 's/MQTT_PASSWORD = ".*"/MQTT_PASSWORD = ""/' \
+              secrets.example.h > secrets.h
+          printf '#pragma once\n#define FW_VERSION "%s"\n' "$FW_VERSION" > version.h
+          cat version.h
+
+      - name: Compile
+        run: |
+          arduino-cli compile --fqbn "$FQBN" --warnings default \
+            --output-dir "$RUNNER_TEMP/out" firmware/Aquarium_Light
+          cp "$RUNNER_TEMP/out/Aquarium_Light.ino.bin" "$RUNNER_TEMP/firmware.bin"
+          echo "$FW_VERSION" > "$RUNNER_TEMP/version.txt"
+          ls -l "$RUNNER_TEMP/firmware.bin"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: |
+            ${{ runner.temp }}/firmware.bin
+            ${{ runner.temp }}/version.txt
+
+      - name: Publish as the "firmware-latest" release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete firmware-latest --cleanup-tag --yes || true
+          gh release create firmware-latest "$RUNNER_TEMP/firmware.bin" "$RUNNER_TEMP/version.txt" \
+            --target "$GITHUB_SHA" \
+            --title "Controller firmware (latest)" \
+            --notes "Firmware $FW_VERSION for the ESP8266 (NodeMCU / D1 mini, 4MB). Installed over the air from the AquaHome app, or flashed over USB at address 0x0."

@@ -22,7 +22,7 @@ the mode and edit the schedule.
 | `index.html`, `style.css`, `script.js` | The dashboard (static, no build step) |
 | `config.js` | Broker connection settings for the dashboard |
 | `firmware/Aquarium_Light/` | Arduino sketch for the ESP8266 |
-| `firmware/Aquarium_Light/secrets.example.h` | Template for the firmware's broker credentials |
+| `firmware/Aquarium_Light/secrets.example.h` | Optional template to pre-fill the broker login for a USB build |
 | `android/` | Native Android app (its own UI, background alerts) |
 
 ## Dashboard
@@ -119,15 +119,25 @@ have to uninstall the app before you can install a newer build.
 | DS3231 SDA | D2 |
 | DS3231 SCL | D1 |
 
-**Setup:**
+**First install (USB, once):**
 
-1. Copy `firmware/Aquarium_Light/secrets.example.h` to `secrets.h` in the same
-   folder and fill in your broker details. `secrets.h` is git-ignored.
-2. If you're not in IST, change `UTC_OFFSET_SECONDS` at the top of the sketch.
-3. Open `firmware/Aquarium_Light/Aquarium_Light.ino` in the Arduino IDE and upload.
-4. On first boot the device opens a `AquariumLight_Setup` hotspot. Join it to
-   enter your WiFi details. If nobody configures it within 3 minutes, the
-   device carries on offline and keeps following the schedule.
+1. Download `firmware.bin` from the
+   [`firmware-latest` release](../../releases/tag/firmware-latest).
+2. On a computer with Chrome or Edge, connect the board over USB, open
+   [ESP Web Flasher](https://espressif.github.io/esptool-js/), connect, and
+   flash `firmware.bin` at address `0x0`.
+   (Or build from source in the Arduino IDE: board *NodeMCU 1.0 (ESP-12E
+   Module)*, flash size *4MB (FS:2MB OTA:~1019KB)*.)
+3. The device opens the `AquariumLight_Setup` hotspot. Join it from a phone,
+   choose your WiFi network, and enter the broker username and password.
+   They're kept in the device's flash.
+
+**Updates after that:** in the app, *Light → Controller → Firmware → Update*.
+The device downloads the latest release from GitHub and restarts. Every push
+to `main` that touches `firmware/` builds and publishes a new release; the
+binary never contains broker credentials.
+
+If you're not in IST, change `UTC_OFFSET_SECONDS` at the top of the sketch.
 
 **Behaviour worth knowing:**
 
@@ -141,7 +151,7 @@ have to uninstall the app before you can install a newer build.
 
 | Topic | Direction | Payload |
 | --- | --- | --- |
-| `aquarium/control` | dashboard → device | `AUTO`, `FORCE_ON`, `FORCE_OFF` or `RESET_WIFI` |
+| `aquarium/control` | app/dashboard → device | `AUTO`, `FORCE_ON`, `FORCE_OFF`, `STATUS`, `SYNC_TIME`, `SET_TIME:YYYY-MM-DDTHH:MM:SS`, `UPDATE_FIRMWARE`, `RESET_WIFI` |
 | `aquarium/schedule` | dashboard → device | `e1,HH:MM,HH:MM,e2,HH:MM,HH:MM` (`e` = `1` enabled, `0` disabled) |
 | `aquarium/status` | device → dashboard | JSON, retained, every 10 s and on every change |
 | `aquarium/online` | device → dashboard | `1` / `0`, retained. The broker sends `0` as the last will if the device drops off |
@@ -157,6 +167,17 @@ Example status:
   "slot1": "08:00-14:00",
   "slot2": "16:00-22:00",
   "slot1Enabled": true,
-  "slot2Enabled": false
+  "slot2Enabled": false,
+  "date": "2026-11-06",
+  "onToday": 18240,
+  "timeSource": "rtc",
+  "rtcFound": true,
+  "rtcLostPower": false,
+  "rtcTemp": 27.5,
+  "ntpAgo": 412,
+  "uptime": 86400,
+  "reset": "Power On",
+  "fw": "1.3",
+  "update": ""
 }
 ```

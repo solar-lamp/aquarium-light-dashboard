@@ -153,6 +153,12 @@ fun LightScreen(isAdmin: Boolean) {
             }
         }
 
+        if (status != null) {
+            VSpace(24.dp)
+            SectionHeader("Light time")
+            LightTimeCard(status)
+        }
+
         VSpace(24.dp)
         SectionHeader("Mode")
 
@@ -220,9 +226,16 @@ fun LightScreen(isAdmin: Boolean) {
             FeedbackText(saveFeedback)
         }
 
+        VSpace(24.dp)
+        SectionHeader("Clock")
+        ClockCard(state, online, isAdmin)
+
         if (isAdmin) {
         VSpace(24.dp)
         SectionHeader("Controller")
+
+        FirmwareCard(status, online)
+        VSpace(14.dp)
 
         GlassCard(Modifier.fillMaxWidth()) {
             MutedText(
