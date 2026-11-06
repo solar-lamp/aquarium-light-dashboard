@@ -111,6 +111,11 @@ fun HomeScreen(
 
         VSpace(20.dp)
 
+        if (status?.safeMode == true) {
+            SafeModeBanner(status, Cloud.isAdmin, online)
+            VSpace(14.dp)
+        }
+
         // Hero tank card
         GlassCard(
             Modifier.fillMaxWidth(),

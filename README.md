@@ -137,6 +137,14 @@ The device downloads the latest release from GitHub and restarts. Every push
 to `main` that touches `firmware/` builds and publishes a new release; the
 binary never contains broker credentials.
 
+**Crash guard:** if the firmware crashes and restarts 3 times in a row, the
+board starts in a minimal *safe mode*. It only connects to WiFi and the broker,
+reports `"safeMode": true`, and accepts On/Off, *Update* and *Restart*. The
+light schedule is paused. The app shows a warning and sends an alert. Install
+a fixed firmware with *Update*, or use *Restart normally* to try the normal
+firmware again. So a bad update can always be fixed remotely, as long as the
+board can still reach WiFi.
+
 If you're not in IST, change `UTC_OFFSET_SECONDS` at the top of the sketch.
 
 **Behaviour worth knowing:**
@@ -151,7 +159,7 @@ If you're not in IST, change `UTC_OFFSET_SECONDS` at the top of the sketch.
 
 | Topic | Direction | Payload |
 | --- | --- | --- |
-| `aquarium/control` | app/dashboard → device | `AUTO`, `FORCE_ON`, `FORCE_OFF`, `STATUS`, `SYNC_TIME`, `SET_TIME:YYYY-MM-DDTHH:MM:SS`, `UPDATE_FIRMWARE`, `RESET_WIFI` |
+| `aquarium/control` | app/dashboard → device | `AUTO`, `FORCE_ON`, `FORCE_OFF`, `STATUS`, `SYNC_TIME`, `SET_TIME:YYYY-MM-DDTHH:MM:SS`, `UPDATE_FIRMWARE`, `RESTART`, `RESET_WIFI` |
 | `aquarium/schedule` | dashboard → device | `e1,HH:MM,HH:MM,e2,HH:MM,HH:MM` (`e` = `1` enabled, `0` disabled) |
 | `aquarium/status` | device → dashboard | JSON, retained, every 10 s and on every change |
 | `aquarium/online` | device → dashboard | `1` / `0`, retained. The broker sends `0` as the last will if the device drops off |

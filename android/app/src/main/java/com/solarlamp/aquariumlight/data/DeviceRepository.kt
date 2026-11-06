@@ -122,6 +122,9 @@ object DeviceRepository {
     /** Ask the controller to install the latest firmware release. */
     fun updateFirmware(): Boolean = publish(TOPIC_CONTROL, "UPDATE_FIRMWARE")
 
+    /** Restart the controller (also takes it out of safe mode). */
+    fun restartController(): Boolean = publish(TOPIC_CONTROL, "RESTART")
+
     /** Ask for a status report right now instead of waiting for the next one. */
     fun requestStatus(): Boolean = publish(TOPIC_CONTROL, "STATUS")
 
