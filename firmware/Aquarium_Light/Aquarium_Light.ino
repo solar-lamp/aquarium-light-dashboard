@@ -1,5 +1,5 @@
 /*
- * Aquarium Light Controller — ESP8266 firmware
+ * AquaHome light controller — ESP8266 firmware
  *
  * Switches a relay on a two-slot daily schedule. Time comes from a DS3231
  * RTC (kept accurate via NTP whenever the internet is reachable), so the
@@ -7,15 +7,23 @@
  * related is non-blocking: losing WiFi or MQTT never stalls the light logic.
  *
  * MQTT topics
- *   aquarium/control   <- AUTO | FORCE_ON | FORCE_OFF | RESET_WIFI
+ *   aquarium/control   <- AUTO | FORCE_ON | FORCE_OFF          set the mode
+ *                         STATUS                               publish status now
+ *                         SYNC_TIME                            re-sync the clock from the internet
+ *                         SET_TIME:YYYY-MM-DDTHH:MM:SS         set the clock (local time)
+ *                         UPDATE_FIRMWARE                      install the latest release over the air
+ *                         RESET_WIFI                           forget WiFi, reopen the setup hotspot
  *   aquarium/schedule  <- "e1,HH:MM,HH:MM,e2,HH:MM,HH:MM"  (e = 1 enabled / 0 disabled)
  *   aquarium/status    -> JSON status, retained, every STATUS_INTERVAL_MS and on change
  *   aquarium/online    -> "1" / "0", retained; "0" is the broker-side last will
  *
- * Credentials live in secrets.h (copy secrets.example.h).
+ * Broker login: entered on the setup hotspot (AquariumLight_Setup) and kept
+ * in flash, so over-the-air updates never need it. secrets.h can pre-fill it
+ * for a USB flash.
  */
 
 #include <ESP8266WiFi.h>
+#include <ESP8266httpUpdate.h>
 #include <WiFiManager.h>
 #include <WiFiClientSecure.h>
 #include <PubSubClient.h>
@@ -26,6 +34,7 @@
 #include <time.h>
 
 #include "secrets.h"
+#include "version.h"     // FW_VERSION, written by CI
 
 // =========================================================
 // CONFIGURATION
@@ -39,11 +48,18 @@ const long UTC_OFFSET_SECONDS = 19800;   // IST, UTC+5:30
 
 const char* const SETUP_AP_NAME          = "AquariumLight_Setup";
 const uint16_t    SETUP_PORTAL_TIMEOUT_S = 180;   // then carry on offline
+const uint16_t    SETUP_PORTAL_LONG_S    = 900;   // when the broker login is missing
+
+const char* const DEFAULT_MQTT_HOST = "8f4859d367254182889b312a863177b0.s1.eu.hivemq.cloud";
+
+const char* const FIRMWARE_URL =
+    "https://github.com/solar-lamp/aquarium-light-dashboard/releases/download/firmware-latest/firmware.bin";
 
 const unsigned long CONTROL_INTERVAL_MS    = 1000;
 const unsigned long STATUS_INTERVAL_MS     = 10000;
 const unsigned long MQTT_RETRY_INTERVAL_MS = 5000;
 const unsigned long WIFI_RETRY_INTERVAL_MS = 30000;
+const unsigned long ONTIME_SAVE_MS         = 300000;   // persist on-time every 5 min
 
 const char* const TOPIC_CONTROL  = "aquarium/control";
 const char* const TOPIC_SCHEDULE = "aquarium/schedule";
@@ -52,6 +68,8 @@ const char* const TOPIC_ONLINE   = "aquarium/online";
 
 const char* const SCHEDULE_FILE = "/schedule.txt";
 const char* const MODE_FILE     = "/mode.txt";
+const char* const ONTIME_FILE   = "/ontime.txt";
+const char* const MQTT_FILE     = "/mqtt.txt";
 
 // Anything earlier than this means the clock was never set.
 const time_t MIN_VALID_EPOCH = 1700000000;   // Nov 2023
@@ -79,19 +97,40 @@ enum Mode : uint8_t { MODE_AUTO, MODE_FORCE_ON, MODE_FORCE_OFF };
 Mode mode = MODE_AUTO;
 
 RTC_DS3231 rtc;
-bool rtcAvailable = false;   // chip answered on I2C
-bool rtcTimeValid = false;   // chip holds a trustworthy time
-bool fsAvailable  = false;
+bool rtcAvailable     = false;   // chip answered on I2C
+bool rtcTimeValid     = false;   // chip holds a trustworthy time
+bool rtcLostPowerBoot = false;   // the RTC had lost its time at power-up (flat coin cell?)
+bool fsAvailable      = false;
+
+// Broker login, from flash (or secrets.h on first boot)
+char     mqttHost[96] = "";
+char     mqttUser[64] = "";
+char     mqttPass[96] = "";
+uint16_t mqttPort     = 8883;
 
 WiFiManager      wifiManager;
 WiFiClientSecure tlsClient;
 PubSubClient     mqtt(tlsClient);
 
-bool lightOn            = false;
-bool statusDirty        = true;    // publish at the next opportunity
-bool wifiResetRequested = false;
+WiFiManagerParameter paramHost("mqtt_host", "Broker host", DEFAULT_MQTT_HOST, 95);
+WiFiManagerParameter paramUser("mqtt_user", "Broker username", "", 63);
+WiFiManagerParameter paramPass("mqtt_pass", "Broker password", "", 95, "type='password'");
+
+bool lightOn                = false;
+bool statusDirty            = true;    // publish at the next opportunity
+bool wifiResetRequested     = false;
+bool firmwareUpdateRequested = false;
+String updateMessage        = "";
 
 volatile bool ntpTimeReceived = false;   // set from the SNTP callback
+unsigned long lastNtpSyncMs   = 0;       // 0 = never
+
+// Light on-time today
+long          onTimeDay   = 0;    // yyyymmdd the counter belongs to (0 = unknown)
+unsigned long onMsToday   = 0;
+unsigned long lastTickMs  = 0;
+unsigned long lastOnSave  = 0;
+bool          onTimeDirty = false;
 
 unsigned long lastControlRun    = 0;
 unsigned long lastStatusPublish = 0;
@@ -146,16 +185,15 @@ bool systemTimeValid()
     return time(nullptr) > MIN_VALID_EPOCH;
 }
 
-// Local wall-clock time: the RTC when it's trustworthy, otherwise the
+// Local date and time: the RTC when it's trustworthy, otherwise the
 // NTP-backed system clock. Returns false when neither is usable.
-bool readLocalTime(int& hour, int& minute, int& second)
+bool readLocalDateTime(int& year, int& month, int& day, int& hour, int& minute, int& second)
 {
     if(rtcAvailable && rtcTimeValid)
     {
         DateTime now = rtc.now();
-        hour   = now.hour();
-        minute = now.minute();
-        second = now.second();
+        year = now.year(); month = now.month(); day = now.day();
+        hour = now.hour(); minute = now.minute(); second = now.second();
         return true;
     }
 
@@ -164,17 +202,32 @@ bool readLocalTime(int& hour, int& minute, int& second)
         time_t t = time(nullptr);
         struct tm local;
         localtime_r(&t, &local);
-        hour   = local.tm_hour;
-        minute = local.tm_min;
-        second = local.tm_sec;
+        year = local.tm_year + 1900; month = local.tm_mon + 1; day = local.tm_mday;
+        hour = local.tm_hour; minute = local.tm_min; second = local.tm_sec;
         return true;
     }
 
     return false;
 }
 
+bool readLocalTime(int& hour, int& minute, int& second)
+{
+    int y, mo, d;
+    return readLocalDateTime(y, mo, d, hour, minute, second);
+}
+
+const char* timeSource()
+{
+    if(rtcAvailable && rtcTimeValid) return "rtc";
+    if(systemTimeValid()) return "ntp";
+    return "none";
+}
+
 void syncRtcFromSystemTime()
 {
+    lastNtpSyncMs = millis();
+    statusDirty = true;
+
     if(!rtcAvailable || !systemTimeValid())
     {
         return;
@@ -194,8 +247,14 @@ void syncRtcFromSystemTime()
 
     rtcTimeValid = true;
 
-    Serial.printf("RTC synced from NTP: %02d:%02d:%02d\n",
+    Serial.printf("RTC synced from NTP: %04d-%02d-%02d %02d:%02d:%02d\n",
+        local.tm_year + 1900, local.tm_mon + 1, local.tm_mday,
         local.tm_hour, local.tm_min, local.tm_sec);
+}
+
+void startNtp()
+{
+    configTime(UTC_OFFSET_SECONDS, 0, "pool.ntp.org", "time.nist.gov", "time.google.com");
 }
 
 // =========================================================
@@ -206,13 +265,9 @@ void syncRtcFromSystemTime()
 //   e1,e2,h1on,m1on,h1off,m1off,h2on,m2on,h2off,m2off
 void saveSchedule()
 {
-    if(!fsAvailable)
-    {
-        return;
-    }
+    if(!fsAvailable) return;
 
     File file = LittleFS.open(SCHEDULE_FILE, "w");
-
     if(!file)
     {
         Serial.println(F("Schedule save failed"));
@@ -237,12 +292,7 @@ void loadSchedule()
     }
 
     File file = LittleFS.open(SCHEDULE_FILE, "r");
-
-    if(!file)
-    {
-        Serial.println(F("Schedule load failed"));
-        return;
-    }
+    if(!file) return;
 
     String data = file.readString();
     file.close();
@@ -269,18 +319,10 @@ void loadSchedule()
 
 void saveMode()
 {
-    if(!fsAvailable)
-    {
-        return;
-    }
+    if(!fsAvailable) return;
 
     File file = LittleFS.open(MODE_FILE, "w");
-
-    if(!file)
-    {
-        Serial.println(F("Mode save failed"));
-        return;
-    }
+    if(!file) return;
 
     file.print(modeName(mode));
     file.close();
@@ -288,29 +330,129 @@ void saveMode()
 
 void loadMode()
 {
-    if(!fsAvailable || !LittleFS.exists(MODE_FILE))
-    {
-        return;
-    }
+    if(!fsAvailable || !LittleFS.exists(MODE_FILE)) return;
 
     File file = LittleFS.open(MODE_FILE, "r");
-
-    if(!file)
-    {
-        return;
-    }
+    if(!file) return;
 
     String data = file.readString();
     file.close();
     data.trim();
 
     Mode loaded;
-
     if(parseMode(data.c_str(), loaded))
     {
         mode = loaded;
         Serial.printf("Mode loaded: %s\n", modeName(mode));
     }
+}
+
+void saveOnTime()
+{
+    onTimeDirty = false;
+    lastOnSave = millis();
+    if(!fsAvailable) return;
+
+    File file = LittleFS.open(ONTIME_FILE, "w");
+    if(!file) return;
+
+    file.printf("%ld,%lu", onTimeDay, onMsToday);
+    file.close();
+}
+
+void loadOnTime()
+{
+    if(!fsAvailable || !LittleFS.exists(ONTIME_FILE)) return;
+
+    File file = LittleFS.open(ONTIME_FILE, "r");
+    if(!file) return;
+
+    String data = file.readString();
+    file.close();
+
+    long day;
+    unsigned long ms;
+    if(sscanf(data.c_str(), "%ld,%lu", &day, &ms) == 2 && ms <= 86400000UL)
+    {
+        onTimeDay = day;
+        onMsToday = ms;
+    }
+}
+
+// Broker login: one value per line (host, port, user, password).
+void saveMqttConfig()
+{
+    if(!fsAvailable) return;
+
+    File file = LittleFS.open(MQTT_FILE, "w");
+    if(!file) return;
+
+    file.printf("%s\n%u\n%s\n%s\n", mqttHost, mqttPort, mqttUser, mqttPass);
+    file.close();
+    Serial.println(F("Broker login saved"));
+}
+
+void loadMqttConfig()
+{
+    if(fsAvailable && LittleFS.exists(MQTT_FILE))
+    {
+        File file = LittleFS.open(MQTT_FILE, "r");
+        if(file)
+        {
+            String host = file.readStringUntil('\n'); host.trim();
+            String port = file.readStringUntil('\n'); port.trim();
+            String user = file.readStringUntil('\n'); user.trim();
+            String pass = file.readStringUntil('\n'); pass.trim();
+            file.close();
+
+            if(host.length() && user.length() && pass.length())
+            {
+                strlcpy(mqttHost, host.c_str(), sizeof(mqttHost));
+                strlcpy(mqttUser, user.c_str(), sizeof(mqttUser));
+                strlcpy(mqttPass, pass.c_str(), sizeof(mqttPass));
+                mqttPort = port.toInt() > 0 ? port.toInt() : 8883;
+                return;
+            }
+        }
+    }
+
+    // First boot after a USB flash: take the login from secrets.h, if any.
+    if(strlen(MQTT_HOST) > 0 && strlen(MQTT_USER) > 0 && strlen(MQTT_PASSWORD) > 0)
+    {
+        strlcpy(mqttHost, MQTT_HOST, sizeof(mqttHost));
+        strlcpy(mqttUser, MQTT_USER, sizeof(mqttUser));
+        strlcpy(mqttPass, MQTT_PASSWORD, sizeof(mqttPass));
+        mqttPort = MQTT_PORT;
+        saveMqttConfig();
+    }
+}
+
+bool mqttConfigured()
+{
+    return mqttHost[0] && mqttUser[0] && mqttPass[0];
+}
+
+// Called when someone saves the setup hotspot form.
+void onPortalParamsSaved()
+{
+    const char* host = paramHost.getValue();
+    const char* user = paramUser.getValue();
+    const char* pass = paramPass.getValue();
+
+    if(strlen(user) == 0 || strlen(pass) == 0)
+    {
+        return;   // left blank: keep the current login
+    }
+
+    strlcpy(mqttHost, strlen(host) ? host : DEFAULT_MQTT_HOST, sizeof(mqttHost));
+    strlcpy(mqttUser, user, sizeof(mqttUser));
+    strlcpy(mqttPass, pass, sizeof(mqttPass));
+    mqttPort = 8883;
+    saveMqttConfig();
+
+    mqtt.disconnect();
+    mqtt.setServer(mqttHost, mqttPort);
+    lastMqttAttempt = 0;
 }
 
 // =========================================================
@@ -319,47 +461,67 @@ void loadMode()
 
 bool slotActive(const Slot& slot, int nowMinutes)
 {
-    if(!slot.enabled)
-    {
-        return false;
-    }
+    if(!slot.enabled) return false;
 
     int on  = slot.onHour * 60 + slot.onMinute;
     int off = slot.offHour * 60 + slot.offMinute;
 
-    if(on == off)
-    {
-        return false;   // zero-length window
-    }
+    if(on == off) return false;   // zero-length window
 
-    if(on < off)
-    {
-        return nowMinutes >= on && nowMinutes < off;
-    }
+    if(on < off) return nowMinutes >= on && nowMinutes < off;
 
     // Window crosses midnight, e.g. 22:00 -> 02:00
     return nowMinutes >= on || nowMinutes < off;
 }
 
+void trackOnTime(int year, int month, int day, bool haveDate)
+{
+    unsigned long nowMs = millis();
+
+    if(lastTickMs != 0 && lightOn)
+    {
+        onMsToday += nowMs - lastTickMs;
+        onTimeDirty = true;
+    }
+    lastTickMs = nowMs;
+
+    if(haveDate)
+    {
+        long today = year * 10000L + month * 100L + day;
+        if(today != onTimeDay)
+        {
+            // New day (or first known date): start counting afresh.
+            if(onTimeDay != 0) onMsToday = 0;
+            onTimeDay = today;
+            saveOnTime();
+        }
+    }
+
+    if(onTimeDirty && nowMs - lastOnSave >= ONTIME_SAVE_MS)
+    {
+        saveOnTime();
+    }
+}
+
 void runControl()
 {
+    int y, mo, d, h, m, s;
+    bool haveTime = readLocalDateTime(y, mo, d, h, m, s);
+
+    // Count the time since the last pass at the state it was in.
+    trackOnTime(y, mo, d, haveTime);
+
     bool shouldBeOn = false;
 
     if(mode == MODE_FORCE_ON)
     {
         shouldBeOn = true;
     }
-    else if(mode == MODE_AUTO)
+    else if(mode == MODE_AUTO && haveTime)
     {
-        int h, m, s;
-
         // With no trustworthy clock, stay off rather than guess.
-        if(readLocalTime(h, m, s))
-        {
-            int nowMinutes = h * 60 + m;
-            shouldBeOn = slotActive(slots[0], nowMinutes) ||
-                         slotActive(slots[1], nowMinutes);
-        }
+        int nowMinutes = h * 60 + m;
+        shouldBeOn = slotActive(slots[0], nowMinutes) || slotActive(slots[1], nowMinutes);
     }
 
     // Written every pass so a glitched pin state can't persist.
@@ -369,6 +531,7 @@ void runControl()
     {
         lightOn = shouldBeOn;
         statusDirty = true;
+        saveOnTime();
         Serial.printf("Light %s (mode %s)\n", lightOn ? "ON" : "OFF", modeName(mode));
     }
 }
@@ -377,16 +540,64 @@ void runControl()
 // MQTT
 // =========================================================
 
+bool handleSetTime(const char* value)
+{
+    int y, mo, d, h, mi, s;
+    if(sscanf(value, "%d-%d-%dT%d:%d:%d", &y, &mo, &d, &h, &mi, &s) != 6 ||
+       y < 2024 || y > 2099 || mo < 1 || mo > 12 || d < 1 || d > 31 || !isValidTime(h, mi) || s < 0 || s > 59)
+    {
+        Serial.println(F("Invalid SET_TIME, ignored"));
+        return false;
+    }
+
+    if(rtcAvailable)
+    {
+        rtc.adjust(DateTime(y, mo, d, h, mi, s));
+        rtcTimeValid = true;
+    }
+    Serial.printf("Clock set to %04d-%02d-%02d %02d:%02d:%02d\n", y, mo, d, h, mi, s);
+    return true;
+}
+
 void handleControl(const char* message)
 {
+    if(strcmp(message, "STATUS") == 0)
+    {
+        statusDirty = true;
+        return;
+    }
+
     if(strcmp(message, "RESET_WIFI") == 0)
     {
         wifiResetRequested = true;   // acted on from loop()
         return;
     }
 
-    Mode requested;
+    if(strcmp(message, "UPDATE_FIRMWARE") == 0)
+    {
+        firmwareUpdateRequested = true;   // acted on from loop()
+        return;
+    }
 
+    if(strcmp(message, "SYNC_TIME") == 0)
+    {
+        Serial.println(F("Clock re-sync requested"));
+        startNtp();
+        statusDirty = true;
+        return;
+    }
+
+    if(strncmp(message, "SET_TIME:", 9) == 0)
+    {
+        if(handleSetTime(message + 9))
+        {
+            statusDirty = true;
+            runControl();
+        }
+        return;
+    }
+
+    Mode requested;
     if(!parseMode(message, requested))
     {
         Serial.println(F("Unknown control command, ignored"));
@@ -426,11 +637,6 @@ void handleSchedule(const char* message)
     slots[1] = makeSlot(e2, h3, m3, h4, m4);
 
     saveSchedule();
-
-    Serial.printf("Schedule: S1 %s %02d:%02d-%02d:%02d | S2 %s %02d:%02d-%02d:%02d\n",
-        e1 ? "on " : "off", h1, m1, h2, m2,
-        e2 ? "on " : "off", h3, m3, h4, m4);
-
     statusDirty = true;
     runControl();
 }
@@ -463,39 +669,75 @@ void onMqttMessage(char* topic, byte* payload, unsigned int length)
 void publishStatus()
 {
     char clockText[16] = "--:--:--";
-    int h, m, s;
+    char dateText[16]  = "";
+    int y, mo, d, h, m, s;
 
-    if(readLocalTime(h, m, s))
+    if(readLocalDateTime(y, mo, d, h, m, s))
     {
         snprintf(clockText, sizeof(clockText), "%02d:%02d:%02d", h, m, s);
+        snprintf(dateText, sizeof(dateText), "%04d-%02d-%02d", y, mo, d);
     }
 
-    char payload[320];
+    char rtcTemp[12] = "null";
+    if(rtcAvailable)
+    {
+        dtostrf(rtc.getTemperature(), 0, 2, rtcTemp);
+    }
+
+    long ntpAgo = lastNtpSyncMs == 0 ? -1 : (long)((millis() - lastNtpSyncMs) / 1000UL);
+
+    // Escape-free: the update message only ever holds library error text.
+    String update = updateMessage;
+    update.replace("\"", "'");
+
+    char payload[768];
 
     snprintf(payload, sizeof(payload),
         "{\"online\":true,"
         "\"mode\":\"%s\","
         "\"light\":\"%s\","
         "\"time\":\"%s\","
+        "\"date\":\"%s\","
         "\"slot1\":\"%02d:%02d-%02d:%02d\","
         "\"slot2\":\"%02d:%02d-%02d:%02d\","
         "\"slot1Enabled\":%s,"
-        "\"slot2Enabled\":%s}",
+        "\"slot2Enabled\":%s,"
+        "\"onToday\":%lu,"
+        "\"timeSource\":\"%s\","
+        "\"rtcFound\":%s,"
+        "\"rtcLostPower\":%s,"
+        "\"rtcTemp\":%s,"
+        "\"ntpAgo\":%ld,"
+        "\"uptime\":%lu,"
+        "\"reset\":\"%s\","
+        "\"fw\":\"%s\","
+        "\"update\":\"%s\"}",
         modeName(mode),
         lightOn ? "ON" : "OFF",
         clockText,
+        dateText,
         slots[0].onHour, slots[0].onMinute, slots[0].offHour, slots[0].offMinute,
         slots[1].onHour, slots[1].onMinute, slots[1].offHour, slots[1].offMinute,
         slots[0].enabled ? "true" : "false",
-        slots[1].enabled ? "true" : "false");
+        slots[1].enabled ? "true" : "false",
+        onMsToday / 1000UL,
+        timeSource(),
+        rtcAvailable ? "true" : "false",
+        rtcLostPowerBoot ? "true" : "false",
+        rtcTemp,
+        ntpAgo,
+        millis() / 1000UL,
+        ESP.getResetReason().c_str(),
+        FW_VERSION,
+        update.c_str());
 
-    // Retained, so a freshly opened dashboard sees the state immediately.
+    // Retained, so a freshly opened app sees the state immediately.
     mqtt.publish(TOPIC_STATUS, payload, true);
 }
 
 void maintainMqtt()
 {
-    if(WiFi.status() != WL_CONNECTED)
+    if(WiFi.status() != WL_CONNECTED || !mqttConfigured())
     {
         return;
     }
@@ -520,8 +762,7 @@ void maintainMqtt()
     Serial.println(F("Connecting to MQTT..."));
 
     // Last will: the broker marks us offline if we drop off without a goodbye.
-    if(mqtt.connect(clientId.c_str(), MQTT_USER, MQTT_PASSWORD,
-                    TOPIC_ONLINE, 1, true, "0"))
+    if(mqtt.connect(clientId.c_str(), mqttUser, mqttPass, TOPIC_ONLINE, 1, true, "0"))
     {
         Serial.println(F("MQTT connected"));
         mqtt.publish(TOPIC_ONLINE, "1", true);
@@ -533,6 +774,62 @@ void maintainMqtt()
     {
         Serial.printf("MQTT connect failed, rc=%d\n", mqtt.state());
     }
+}
+
+// =========================================================
+// FIRMWARE UPDATE (over the air)
+// =========================================================
+
+void runFirmwareUpdate()
+{
+    firmwareUpdateRequested = false;
+
+    if(WiFi.status() != WL_CONNECTED)
+    {
+        updateMessage = "No WiFi";
+        statusDirty = true;
+        return;
+    }
+
+    Serial.println(F("Firmware update: downloading"));
+
+    if(mqtt.connected())
+    {
+        updateMessage = "Updating";
+        publishStatus();
+        mqtt.loop();
+        mqtt.disconnect();
+    }
+
+    // Free the broker connection's TLS memory before opening another.
+    tlsClient.stop();
+    saveOnTime();
+
+    WiFiClientSecure client;
+    client.setInsecure();
+
+    ESPhttpUpdate.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
+    ESPhttpUpdate.rebootOnUpdate(true);
+
+    // Restarts into the new firmware on success.
+    t_httpUpdate_return result = ESPhttpUpdate.update(client, FIRMWARE_URL, FW_VERSION);
+
+    switch(result)
+    {
+        case HTTP_UPDATE_FAILED:
+            updateMessage = "Failed: " + ESPhttpUpdate.getLastErrorString();
+            break;
+        case HTTP_UPDATE_NO_UPDATES:
+            updateMessage = "Already up to date";
+            break;
+        default:
+            updateMessage = "";
+            break;
+    }
+
+    Serial.println(updateMessage);
+    lastMqttAttempt = 0;   // reconnect straight away
+    statusDirty = true;
 }
 
 // =========================================================
@@ -569,6 +866,7 @@ void resetWifiAndRestart()
         mqtt.disconnect();
     }
 
+    saveOnTime();
     wifiManager.resetSettings();
     delay(500);
     ESP.restart();
@@ -582,6 +880,7 @@ void setup()
 {
     Serial.begin(115200);
     Serial.println();
+    Serial.printf("AquaHome firmware %s\n", FW_VERSION);
 
     pinMode(RELAY_PIN, OUTPUT);
     digitalWrite(RELAY_PIN, LOW);
@@ -596,11 +895,12 @@ void setup()
     }
     else
     {
-        rtcTimeValid = !rtc.lostPower();
+        rtcLostPowerBoot = rtc.lostPower();
+        rtcTimeValid = !rtcLostPowerBoot;
 
-        if(!rtcTimeValid)
+        if(rtcLostPowerBoot)
         {
-            Serial.println(F("RTC lost power, waiting for NTP"));
+            Serial.println(F("RTC lost power (coin cell flat or missing?), waiting for NTP"));
         }
     }
 
@@ -611,11 +911,14 @@ void setup()
     {
         loadSchedule();
         loadMode();
+        loadOnTime();
     }
     else
     {
         Serial.println(F("LittleFS mount failed, settings won't persist"));
     }
+
+    loadMqttConfig();
 
     // Get the light right before touching the network.
     runControl();
@@ -627,28 +930,42 @@ void setup()
             ntpTimeReceived = true;
         }
     });
-    configTime(UTC_OFFSET_SECONDS, 0, "pool.ntp.org", "time.nist.gov", "time.google.com");
+    startNtp();
 
     // WiFi: non-blocking, so the schedule keeps running while the setup
     // portal is open, and after it times out with no network at all.
     WiFi.mode(WIFI_STA);
     wifiManager.setConfigPortalBlocking(false);
-    wifiManager.setConfigPortalTimeout(SETUP_PORTAL_TIMEOUT_S);
+    wifiManager.addParameter(&paramHost);
+    wifiManager.addParameter(&paramUser);
+    wifiManager.addParameter(&paramPass);
+    wifiManager.setSaveParamsCallback(onPortalParamsSaved);
 
-    if(wifiManager.autoConnect(SETUP_AP_NAME))
+    if(!mqttConfigured())
     {
-        Serial.println(F("WiFi connected"));
+        // No broker login yet: open the hotspot so someone can enter it.
+        Serial.println(F("No broker login, opening setup portal"));
+        wifiManager.setConfigPortalTimeout(SETUP_PORTAL_LONG_S);
+        wifiManager.startConfigPortal(SETUP_AP_NAME);
     }
     else
     {
-        Serial.println(F("WiFi not connected, setup portal open"));
+        wifiManager.setConfigPortalTimeout(SETUP_PORTAL_TIMEOUT_S);
+        if(wifiManager.autoConnect(SETUP_AP_NAME))
+        {
+            Serial.println(F("WiFi connected"));
+        }
+        else
+        {
+            Serial.println(F("WiFi not connected, setup portal open"));
+        }
     }
 
     // MQTT. TLS is encrypted but the broker certificate isn't verified.
     tlsClient.setInsecure();
-    mqtt.setServer(MQTT_HOST, MQTT_PORT);
+    mqtt.setServer(mqttHost, mqttPort);
     mqtt.setCallback(onMqttMessage);
-    mqtt.setBufferSize(512);
+    mqtt.setBufferSize(1024);
 }
 
 void loop()
@@ -676,6 +993,11 @@ void loop()
         publishStatus();
         lastStatusPublish = now;
         statusDirty = false;
+    }
+
+    if(firmwareUpdateRequested)
+    {
+        runFirmwareUpdate();
     }
 
     if(wifiResetRequested)
